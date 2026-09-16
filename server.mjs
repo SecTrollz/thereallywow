@@ -39,6 +39,14 @@ try {
   });
 } catch {}
 
+function readEnvKey(key) {
+  try {
+    const __dir = dirname(fileURLToPath(import.meta.url));
+    const line = readFileSync(join(__dir, ".env"), "utf8").split("\n").find(l => l.startsWith(key+"="));
+    return line ? line.slice(key.length + 1).trim() : null;
+  } catch { return null; }
+}
+
 let DEVICE         = process.env.ADB_DEVICE || "192.168.1.168:5556";
 const API_KEY      = process.env.MCP_API_KEY || null;
 const TOUCH_DEV    = process.env.TOUCH_DEV || "/dev/input/event7";
@@ -1179,6 +1187,25 @@ input::placeholder{color:var(--ash-dim);opacity:.65}
       <div id="adbst" style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.4px">probing…</div>
     </div>
   </div>
+  <div class="sec collapsed" id="sec-keys">
+    <h4 onclick="toggleSec('keys')">Keys</h4>
+    <div class="sec-body">
+      <div style="font-size:9px;color:var(--ash-dim);margin-bottom:6px;letter-spacing:.4px">Values written to .env — never echoed back</div>
+      <label style="font-size:9px;color:var(--ash-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Agnes API Key <span id="agnes-key-status"></span></label>
+      <input id="agnes-key-in" type="password" class="full" placeholder="sk-ant-… or OpenClaw key" autocomplete="new-password">
+      <div class="row" style="margin-bottom:8px">
+        <button onclick="saveKey('AGNES_API_KEY','agnes-key-in','agnes-key-status')">Save</button>
+        <button onclick="clearKey('AGNES_API_KEY','agnes-key-status')">Clear</button>
+      </div>
+      <label style="font-size:9px;color:var(--ash-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Server Key (MCP_API_KEY) <span id="server-key-status"></span></label>
+      <input id="server-key-in" type="password" class="full" placeholder="protects this server…" autocomplete="new-password">
+      <div class="row">
+        <button onclick="saveKey('MCP_API_KEY','server-key-in','server-key-status')">Save</button>
+        <button onclick="clearKey('MCP_API_KEY','server-key-status')">Clear</button>
+      </div>
+      <div style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.3px">Server key change requires restart</div>
+    </div>
+  </div>
   <div class="sec collapsed" id="sec-ars">
     <h4 onclick="toggleSec('ars')">Arsenal</h4>
     <div class="sec-body">
@@ -1241,6 +1268,10 @@ _get('/api/info').then(function(r){return r.json();}).then(function(d){
   if(d.tunnel_url)txt+=' \u00b7 '+d.tunnel_url;
   else if(d.mesh_ip)txt+=' \u00b7 mesh:'+d.mesh_ip;
   document.getElementById('devinfo').textContent=txt;
+  if(d.keys){
+    setKeyStatus('agnes-key-status', d.keys.agnes_key_set);
+    setKeyStatus('server-key-status', d.keys.server_key_set);
+  }
 }).catch(function(){document.getElementById('devinfo').textContent='offline';});
 
 function setStatus(msg){document.getElementById('stmsg').textContent=msg;}
@@ -1402,6 +1433,40 @@ function pend(ex,ey){
   }
   ds=null;
 }
+function setKeyStatus(elId, isSet){
+  var el=document.getElementById(elId);
+  if(!el)return;
+  el.textContent=isSet?'\u2014 set':'\u2014 not set';
+  el.style.color=isSet?'var(--ok)':'var(--ash-dim)';
+}
+function saveKey(envKey, inputId, statusId){
+  var val=document.getElementById(inputId).value.trim();
+  if(!val){addLog('Key value empty — use Clear to remove',true);return;}
+  fetch('/api/setenv',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({key:envKey,value:val})
+  }).then(function(r){return r.json();}).then(function(j){
+    if(j.ok){
+      document.getElementById(inputId).value='';
+      setKeyStatus(statusId,true);
+      addLog(envKey+' saved'+(j.restart_required?' — restart to apply':''),false);
+    } else {
+      addLog('Save failed: '+(j.error||'unknown'),true);
+    }
+  }).catch(function(e){addLog('Save error: '+e.message,true);});
+}
+function clearKey(envKey, statusId){
+  fetch('/api/setenv',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({key:envKey,value:''})
+  }).then(function(r){return r.json();}).then(function(j){
+    if(j.ok){
+      setKeyStatus(statusId,false);
+      addLog(envKey+' cleared'+(j.restart_required?' — restart to apply':''),false);
+    } else {
+      addLog('Clear failed: '+(j.error||'unknown'),true);
+    }
+  }).catch(function(e){addLog('Clear error: '+e.message,true);});
+}
+
 wrap.addEventListener('mousedown',function(e){e.preventDefault();pstart(e.clientX,e.clientY);});
 wrap.addEventListener('mouseup',function(e){pend(e.clientX,e.clientY);});
 wrap.addEventListener('mouseleave',function(){ds=null;});
@@ -1676,6 +1741,7 @@ function startHttpServer(port = 3456) {
         tunnel_url:tunnel,
         stream:`/stream?fps=2`, viewer:`/`,
         tools:buildOpenAIToolList().length, version:"3.1.0",
+        keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY") },
         agnes:{
           local:`http://localhost:${PORT}`,
           mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
@@ -1686,6 +1752,39 @@ function startHttpServer(port = 3456) {
           system_prompt:"You control a rooted Android device via 44 thereallywow tools. screenshot/stream to see screen. tap_coords/multi_touch/swipe for input. root_shell for root commands. All tool calls POST to /execute with {tool_name, parameters}."
         }
       }));
+    }
+
+    if (url.pathname === "/api/setenv" && req.method === "POST") {
+      if (!checkAuth(req, res, url)) return;
+      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY"];
+      let key, value;
+      try { ({key, value} = JSON.parse(body)); } catch {
+        res.writeHead(400, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:"Invalid JSON"}));
+      }
+      if (!ALLOWED_KEYS.includes(key)) {
+        res.writeHead(400, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:"Key not permitted"}));
+      }
+      try {
+        const __dir = dirname(fileURLToPath(import.meta.url));
+        const envPath = join(__dir, ".env");
+        let lines = [];
+        try { lines = readFileSync(envPath, "utf8").split("\n").filter(l => l.trim()); } catch {}
+        const exists = lines.some(l => l.startsWith(key + "="));
+        let updated;
+        if (value) {
+          updated = exists ? lines.map(l => l.startsWith(key+"=") ? `${key}=${value}` : l) : [...lines, `${key}=${value}`];
+        } else {
+          updated = lines.filter(l => !l.startsWith(key+"="));
+        }
+        writeFileSync(envPath, updated.join("\n") + "\n", {mode: 0o600});
+        res.writeHead(200, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({ok:true, key, set:!!value, restart_required: key==="MCP_API_KEY"}));
+      } catch(e) {
+        res.writeHead(500, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:e.message}));
+      }
     }
 
     if (url.pathname === "/reconnect" && req.method === "POST") {
