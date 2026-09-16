@@ -1,7 +1,7 @@
 {
   "name": "thereallywow-project",
-  "version": "3.0.0",
-  "description": "Android device control via ADB/MCP — 35 tools: UI automation, gaming multi-touch, pixel reading, network capture, live stream",
+  "version": "3.1.0",
+  "description": "Android device control via ADB/MCP — 44 tools: UI automation, gaming multi-touch, pixel reading, network capture, live stream, web GUI",
   "main": "server.mjs",
   "type": "module",
   "scripts": {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Moto Device Control MCP Server v3.0 — Gaming Edition
+ * thereallywow v3.1.0 — Android Device Control MCP Server
  *
  * Env vars:
  *   ADB_DEVICE   — target device (default 192.168.1.168:5556)
@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execSync, execFileSync, spawn } from "child_process";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import http from "http";
@@ -39,9 +39,59 @@ try {
   });
 } catch {}
 
-const DEVICE       = process.env.ADB_DEVICE || "192.168.1.168:5556";
+let DEVICE         = process.env.ADB_DEVICE || "192.168.1.168:5556";
 const API_KEY      = process.env.MCP_API_KEY || null;
-const TOUCH_DEV    = "/dev/input/event7"; // DJN touchscreen, slots 0-9, 720x1600
+const TOUCH_DEV    = process.env.TOUCH_DEV || "/dev/input/event7";
+const MESH_IP      = process.env.WG_MESH_IP  || null;
+
+// Read tunnel URL written by tunnel-start.sh (live, no server restart needed)
+function getTunnelUrl() {
+  try {
+    const __dir = dirname(fileURLToPath(import.meta.url));
+    return readFileSync(join(__dir, "network/tunnel.url"), "utf8").trim() || null;
+  } catch { return process.env.TUNNEL_URL || null; }
+}
+
+// Device screen dimensions — queried once at startup, used for scroll/stream scaling
+let DEVICE_W = 720, DEVICE_H = 1600;
+function initDeviceDims() {
+  try {
+    const out = adb("wm size");
+    const m = out.match(/(\d+)x(\d+)/);
+    if (m) { DEVICE_W = parseInt(m[1]); DEVICE_H = parseInt(m[2]); }
+  } catch {}
+}
+// ── ADB connection watchdog ───────────────────────────────────────────────────
+
+let _adbAliveCache = { ok: false, at: 0, dev: "" };
+function adbIsAlive() {
+  const now = Date.now();
+  if (_adbAliveCache.dev === DEVICE && now - _adbAliveCache.at < 2000) return _adbAliveCache.ok;
+  try {
+    const s = execFileSync("adb", ["-s", DEVICE, "get-state"], { encoding:"utf8", timeout:3000 }).trim();
+    _adbAliveCache = { ok: s === "device", at: now, dev: DEVICE };
+  } catch { _adbAliveCache = { ok: false, at: now, dev: DEVICE }; }
+  return _adbAliveCache.ok;
+}
+
+function adbReconnect(newDevice) {
+  if (newDevice) DEVICE = newDevice;
+  _adbAliveCache.at = 0; // invalidate cache so adbIsAlive re-checks after connect
+  try {
+    execFileSync("adb", ["connect", DEVICE], { encoding:"utf8", timeout:8000 });
+    if (adbIsAlive()) {
+      process.stderr.write(`[thereallywow] ADB connected: ${DEVICE}\n`);
+      initDeviceDims();
+      return true;
+    }
+  } catch {}
+  process.stderr.write(`[thereallywow] ADB connect failed: ${DEVICE}\n`);
+  return false;
+}
+
+// Reconnect once at startup, then check every 30s
+adbReconnect();
+setInterval(() => { if (!adbIsAlive()) adbReconnect(); }, 30000);
 
 // ── Persistent ADB shell ─────────────────────────────────────────────────────
 
@@ -193,6 +243,12 @@ function takeScreenshot() {
     { timeout: 12000, maxBuffer: 8 * 1024 * 1024 });
 }
 
+function takeScreenshotJpeg(quality = 82) {
+  return execSync(
+    `adb -s ${DEVICE} exec-out screencap -p | magick - -quality ${quality} jpg:-`,
+    { timeout: 12000, maxBuffer: 4 * 1024 * 1024 });
+}
+
 // Read pixel color using ImageMagick — returns {r,g,b,a,hex}
 function readPixelColor(x, y) {
   const out = execSync(
@@ -318,7 +374,7 @@ async function pollUntil(predicate, timeoutMs, pollMs = 500) {
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({ name: "moto-device-control", version: "3.0.0",
+const server = new McpServer({ name: "thereallywow", version: "3.1.0",
   description: "Full Android device control — UI, root, gaming input, multi-touch, network" });
 
 // ── Navigation & UI tools ─────────────────────────────────────────────────────
@@ -750,6 +806,89 @@ server.tool("device_info", "Get device model, Android version, battery, serial."
   }
 );
 
+server.tool("double_tap", "Double-tap at coordinates.",
+  { x: z.number(), y: z.number(), delay_ms: z.number().default(100) },
+  async ({ x, y, delay_ms }) => {
+    await shellExecQueued(`input tap ${x} ${y} && sleep ${(delay_ms/1000).toFixed(3)} && input tap ${x} ${y}`);
+    invalidateUi();
+    return { content: [{ type:"text", text:`Double tapped (${x},${y})` }] };
+  }
+);
+
+server.tool("force_stop", "Force-stop an app by package name.",
+  { package: z.string() },
+  async ({ package: pkg }) => {
+    const out = adb(`am force-stop ${pkg}`);
+    invalidateUi();
+    return { content: [{ type:"text", text: out || `Force stopped ${pkg}` }] };
+  }
+);
+
+server.tool("uninstall_apk", "Uninstall an app by package name.",
+  { package: z.string(), keep_data: z.boolean().default(false) },
+  async ({ package: pkg, keep_data }) => ({
+    content: [{ type:"text", text: adbExec(`uninstall${keep_data?" -k":""} ${pkg}`) }]
+  })
+);
+
+server.tool("clear_app_cache", "Clear an app's data and cache.",
+  { package: z.string() },
+  async ({ package: pkg }) => ({
+    content: [{ type:"text", text: adb(`pm clear ${pkg}`) }]
+  })
+);
+
+server.tool("reboot", "Reboot the device.",
+  { mode: z.enum(["normal","recovery","bootloader"]).default("normal") },
+  async ({ mode }) => {
+    adbExec(`reboot${mode !== "normal" ? " " + mode : ""}`);
+    return { content: [{ type:"text", text:`Rebooting (${mode})…` }] };
+  }
+);
+
+server.tool("screen_record_start", "Start screen recording in background.",
+  { output: z.string().default("/sdcard/screenrecord.mp4"), time_limit: z.number().default(180) },
+  async ({ output, time_limit }) => {
+    const safe = output.replace(/[^a-zA-Z0-9/_.-]/g, "");
+    adbRoot(`screenrecord --time-limit ${time_limit} ${safe} &`);
+    return { content: [{ type:"text", text:`Recording → ${safe} (max ${time_limit}s)` }] };
+  }
+);
+
+server.tool("screen_record_stop", "Stop screen recording and pull the video.",
+  { remote_path: z.string().default("/sdcard/screenrecord.mp4"), local_path: z.string().optional() },
+  async ({ remote_path, local_path }) => {
+    adbRoot("pkill screenrecord 2>/dev/null; true");
+    await new Promise(r => setTimeout(r, 1200));
+    const dest = local_path || "/data/data/com.termux/files/home/screenrecord.mp4";
+    adbExec(`pull "${remote_path}" "${dest}"`);
+    return { content: [{ type:"text", text:`Saved: ${dest}` }] };
+  }
+);
+
+server.tool("wait_for_text", "Wait until specified text appears on screen.",
+  { text: z.string(), timeout_ms: z.number().default(15000), poll_ms: z.number().default(500) },
+  async ({ text, timeout_ms, poll_ms }) => {
+    const el = await pollUntil(xml => findElement(xml, { partialText: text }), timeout_ms, poll_ms);
+    if (!el) return { content: [{ type:"text", text:`"${text}" not found within ${timeout_ms}ms` }] };
+    return { content: [{ type:"text", text:`Found "${text}" at (${el._x},${el._y})` }] };
+  }
+);
+
+server.tool("rotate_screen", "Set screen rotation (0/90/180/270 degrees or auto).",
+  { rotation: z.enum(["0","90","180","270","auto"]) },
+  async ({ rotation }) => {
+    if (rotation === "auto") {
+      adb("settings put system accelerometer_rotation 1");
+    } else {
+      const val = { "0":0, "90":1, "180":2, "270":3 }[rotation] ?? 0;
+      adb("settings put system accelerometer_rotation 0");
+      adb(`settings put system user_rotation ${val}`);
+    }
+    return { content: [{ type:"text", text:`Rotation: ${rotation}` }] };
+  }
+);
+
 // ── MJPEG stream ──────────────────────────────────────────────────────────────
 
 const streamClients = new Map();
@@ -763,8 +902,8 @@ function rescheduleStream() {
   streamTimer = setInterval(() => {
     if (streamClients.size===0) { clearInterval(streamTimer); streamTimer=null; return; }
     let frame;
-    try { frame=takeScreenshot(); } catch { return; }
-    const header=Buffer.from(`--frame\r\nContent-Type: image/png\r\nContent-Length: ${frame.length}\r\n\r\n`);
+    try { frame=takeScreenshotJpeg(); } catch { return; }
+    const header=Buffer.from(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${frame.length}\r\n\r\n`);
     const chunk=Buffer.concat([header,frame,Buffer.from("\r\n")]);
     for (const res of streamClients.keys()) {
       try { res.write(chunk); } catch { streamClients.delete(res); }
@@ -772,24 +911,400 @@ function rescheduleStream() {
   }, ms);
 }
 
-const VIEWER_HTML = (port, fps) => `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>Moto Live View</title>
-<style>*{margin:0;padding:0;box-sizing:border-box}body{background:#111;display:flex;flex-direction:column;
-align-items:center;justify-content:center;min-height:100vh;font-family:monospace;color:#0f0}
-img{max-width:100vw;max-height:92vh;object-fit:contain;border:1px solid #222;image-rendering:pixelated}
-#bar{padding:6px 12px;font-size:11px;opacity:.6;display:flex;gap:16px}a{color:#0f0}</style>
-</head><body>
-<img src="/stream?fps=${fps}" id="feed" alt="Device screen">
-<div id="bar"><span>moto-device-control v3.0</span>
-<span>fps: <a href="/view?fps=1">1</a> <a href="/view?fps=2">2</a> <a href="/view?fps=3">3</a> <a href="/view?fps=5">5</a></span>
-<span id="ts">${fps} fps</span></div></body></html>`;
+const VIEWER_HTML = (port, fps, apiKey) => `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>thereallywow</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --void:#020002;
+  --ember:#c0001e;
+  --ember-hot:#ff1a38;
+  --ember-dim:rgba(160,0,24,.5);
+  --ash:#ddd0d0;
+  --ash-dim:#6b4848;
+  --br:rgba(180,0,28,.32);
+  --br-hot:rgba(255,30,55,.7);
+  --glass:rgba(7,0,3,.58);
+  --glass2:rgba(12,0,5,.68);
+  --glow:0 0 10px rgba(200,0,28,.85),0 0 28px rgba(130,0,18,.4);
+  --glow-sm:0 0 7px rgba(200,0,28,.75);
+  --ok:#39ff14;
+  --err:var(--ember-hot);
+}
+body{
+  background:var(--void);color:var(--ash);
+  font:11px/1.5 'Courier New',Courier,monospace;
+  height:100vh;display:flex;flex-direction:column;overflow:hidden;position:relative;
+}
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 80% 40% at 50% 108%,rgba(150,0,22,.4) 0%,transparent 65%),
+    radial-gradient(ellipse 45% 45% at 8% 92%,rgba(100,0,14,.22) 0%,transparent 60%),
+    radial-gradient(ellipse 35% 55% at 92% 88%,rgba(80,0,10,.16) 0%,transparent 58%),
+    radial-gradient(ellipse 60% 20% at 50% 0%,rgba(30,0,5,.3) 0%,transparent 70%);
+  animation:embers 9s ease-in-out infinite alternate;
+}
+@keyframes embers{0%{opacity:.75}100%{opacity:1;filter:brightness(1.25)}}
+body::after{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.028;
+  background-image:linear-gradient(rgba(200,0,28,.6) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(200,0,28,.6) 1px,transparent 1px);
+  background-size:28px 28px;
+}
+header,main,#status{position:relative;z-index:1}
+header{
+  background:var(--glass);
+  backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);
+  border-bottom:1px solid var(--br);
+  padding:8px 14px;display:flex;align-items:center;gap:12px;flex-shrink:0;
+  box-shadow:0 1px 0 rgba(255,20,45,.1),0 4px 28px rgba(0,0,0,.95);
+}
+.logo{
+  color:var(--ember-hot);font-weight:700;font-size:13px;
+  letter-spacing:3px;text-transform:uppercase;
+  text-shadow:var(--glow);
+  animation:logo-pulse 5s ease-in-out infinite alternate;
+}
+@keyframes logo-pulse{
+  0%{text-shadow:0 0 8px rgba(200,0,28,.7),0 0 20px rgba(130,0,18,.3)}
+  100%{text-shadow:0 0 16px rgba(255,30,55,.95),0 0 40px rgba(180,0,28,.55),0 0 70px rgba(110,0,16,.2)}
+}
+#devinfo{color:var(--ash-dim);font-size:10px;flex:1;letter-spacing:.6px}
+select,button,input{
+  background:rgba(14,0,6,.8);color:var(--ash);
+  border:1px solid var(--br);font:inherit;border-radius:2px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+select,input{padding:4px 8px;letter-spacing:.4px}
+select:focus,input:focus{
+  outline:none;border-color:var(--ember-hot);
+  box-shadow:var(--glow-sm),inset 0 0 10px rgba(180,0,26,.12);
+}
+input::placeholder{color:var(--ash-dim);opacity:.7}
+button{
+  padding:5px 9px;cursor:pointer;
+  transition:all .18s ease;letter-spacing:.6px;font-size:10px;
+}
+button:hover{
+  background:rgba(160,0,24,.4);border-color:var(--ember-hot);
+  color:#fff;box-shadow:var(--glow-sm),0 0 0 1px rgba(255,30,55,.18);
+  text-shadow:0 0 8px rgba(255,55,75,.9);
+}
+button:active{background:rgba(190,0,28,.55);box-shadow:0 0 18px rgba(200,0,28,.9)}
+main{flex:1;display:flex;overflow:hidden;min-height:0}
+#wrap{
+  flex:1;display:flex;align-items:center;justify-content:center;
+  background:#000;overflow:hidden;position:relative;
+  cursor:crosshair;user-select:none;-webkit-user-select:none;touch-action:none;
+}
+#wrap::after{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:2;
+  background:repeating-linear-gradient(
+    to bottom,transparent 0,transparent 3px,rgba(0,0,0,.15) 3px,rgba(0,0,0,.15) 4px);
+}
+#wrap::before{
+  content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
+  background:radial-gradient(ellipse 90% 90% at 50% 50%,transparent 60%,rgba(0,0,0,.55) 100%);
+}
+#feed{max-width:100%;max-height:100%;object-fit:contain;display:block;pointer-events:none;position:relative;z-index:1}
+aside{
+  width:248px;
+  background:var(--glass2);
+  backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+  border-left:1px solid var(--br);
+  display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;
+  box-shadow:-6px 0 35px rgba(0,0,0,.85),-1px 0 0 rgba(180,0,26,.2);
+}
+aside::-webkit-scrollbar{width:2px}
+aside::-webkit-scrollbar-thumb{background:var(--br);border-radius:1px}
+.sec{padding:9px 10px;border-bottom:1px solid rgba(160,0,22,.16)}
+.sec h4{
+  font-size:9px;text-transform:uppercase;color:var(--ember);
+  margin-bottom:7px;letter-spacing:2px;
+  text-shadow:0 0 8px rgba(190,0,26,.55);
+  border-left:2px solid var(--ember);padding-left:7px;
+  box-shadow:-4px 0 0 -2px var(--ember);
+}
+.row{display:flex;gap:3px;margin-bottom:3px}
+.row:last-child{margin-bottom:0}
+.row button{flex:1;white-space:nowrap}
+.full{width:100%;margin-bottom:3px;display:block}
+#log{
+  flex:1;overflow-y:auto;padding:6px 8px;
+  font-size:9px;color:var(--ash-dim);min-height:60px;
+  background:rgba(0,0,0,.35);letter-spacing:.3px;
+}
+#log::-webkit-scrollbar{width:2px}
+#log::-webkit-scrollbar-thumb{background:rgba(160,0,22,.4)}
+.ll{margin-bottom:2px;word-break:break-all;padding:2px 0;border-bottom:1px solid rgba(160,0,22,.07)}
+.ok{color:#b03040}.er{color:var(--ember-hot);text-shadow:0 0 6px rgba(255,0,20,.5)}
+#status{
+  background:rgba(4,0,2,.88);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-top:1px solid var(--br);
+  padding:4px 13px;font-size:9px;color:var(--ash-dim);letter-spacing:.6px;
+  flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 -1px 0 rgba(190,0,26,.12);
+}
+#dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--ember-hot);display:inline-block;
+  margin-right:6px;vertical-align:middle;
+  box-shadow:0 0 7px var(--ember-hot),0 0 14px rgba(190,0,26,.6);
+  animation:dot-pulse 2.5s ease-in-out infinite;
+}
+@keyframes dot-pulse{
+  0%,100%{opacity:1;box-shadow:0 0 7px var(--ember-hot),0 0 14px rgba(190,0,26,.6)}
+  50%{opacity:.4;box-shadow:0 0 3px var(--ember),0 0 7px rgba(130,0,18,.3)}
+}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">thereallywow</span>
+  <span id="devinfo">connecting…</span>
+  <label style="color:var(--ash-dim);letter-spacing:.5px;font-size:10px">fps
+    <select id="fps"><option>1</option><option>2</option><option>3</option><option>5</option><option>10</option></select>
+  </label>
+</header>
+<main>
+<div id="wrap"><img id="feed" src="/stream?fps=${fps}${apiKey ? '&token='+encodeURIComponent(apiKey) : ''}" alt="screen"></div>
+<aside>
+  <div class="sec"><h4>Navigate</h4>
+    <div class="row">
+      <button data-k="KEYCODE_BACK">◀ Back</button>
+      <button data-k="KEYCODE_HOME">⌂ Home</button>
+      <button data-k="KEYCODE_APP_SWITCH">⊞ Recent</button>
+    </div>
+    <div class="row">
+      <button data-k="KEYCODE_VOLUME_DOWN">Vol −</button>
+      <button data-k="KEYCODE_VOLUME_UP">Vol +</button>
+      <button data-k="KEYCODE_POWER">Power</button>
+    </div>
+  </div>
+  <div class="sec"><h4>Transmit</h4>
+    <input id="tin" type="text" class="full" placeholder="input to device…">
+    <div class="row">
+      <button onclick="sendType()">▶ Send</button>
+      <button data-k="KEYCODE_ENTER">↵ Enter</button>
+      <button data-k="KEYCODE_DEL">⌫ Del</button>
+    </div>
+  </div>
+  <div class="sec"><h4>Shell</h4>
+    <input id="shin" type="text" class="full" placeholder="# command…">
+    <button class="full" onclick="sendShell()">▶ Execute</button>
+  </div>
+  <div class="sec"><h4>Link</h4>
+    <input id="adbin" type="text" class="full" placeholder="IP:PORT">
+    <div class="row">
+      <button onclick="reconnect()">⟳ Reconnect</button>
+      <button onclick="fixPort()"># Fix :5555</button>
+    </div>
+    <div id="adbst" style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.4px">probing…</div>
+  </div>
+  <div class="sec"><h4>Arsenal</h4>
+    <div class="row">
+      <button onclick="snap()">⊙ Snap</button>
+      <button onclick="c('get_ui_tree',{})">UI Tree</button>
+      <button onclick="c('device_info',{})">Device</button>
+    </div>
+    <div class="row">
+      <button onclick="c('set_perf_mode',{mode:'performance'})">Perf ▲</button>
+      <button onclick="c('set_perf_mode',{mode:'balanced'})">Perf ▼</button>
+      <button onclick="c('get_notifications',{})">Notifs</button>
+    </div>
+    <div class="row">
+      <button onclick="c('screen_record_start',{})">● Rec</button>
+      <button onclick="c('screen_record_stop',{})">■ Stop</button>
+      <button onclick="c('reboot',{mode:'normal'})">Reboot</button>
+    </div>
+    <div class="row">
+      <button onclick="c('rotate_screen',{rotation:'90'})">↺ Rot 90</button>
+      <button onclick="c('rotate_screen',{rotation:'auto'})">⟳ Auto</button>
+      <button onclick="c('get_current_app',{})">Current</button>
+    </div>
+    <div class="row">
+      <button onclick="c('list_packages',{})">Packages</button>
+      <button onclick="c('start_network_capture',{})">▶ Net Cap</button>
+      <button onclick="c('stop_network_capture',{})">■ Net Cap</button>
+    </div>
+  </div>
+  <div class="sec"><h4>Invoke</h4>
+    <input id="pkgin" type="text" class="full" placeholder="com.package.name">
+    <div class="row">
+      <button class="full" onclick="sendLaunch()">▶ Launch</button>
+      <button onclick="sendForceStop()">■ Stop</button>
+    </div>
+  </div>
+  <div class="sec" style="border-bottom:none"><h4>Dispatch</h4></div>
+  <div id="log"></div>
+</aside>
+</main>
+<div id="status"><span id="dot"></span>ready · click=tap · drag=swipe · hold 600ms=long-press</div>
+<script>
+var devW=720,devH=1600;
+var _auth=${apiKey ? JSON.stringify('Bearer '+apiKey) : 'null'};
+function _hdr(extra){var h=extra||{};if(_auth)h['Authorization']=_auth;return h;}
+function _get(path){return fetch(path,{headers:_hdr()});}
+
+_get('/api/info').then(function(r){return r.json();}).then(function(d){
+  devW=d.device_w||720;devH=d.device_h||1600;
+  var txt=d.device+' \u00b7 '+devW+'x'+devH;
+  if(d.tunnel_url)txt+=' \u00b7 @ '+d.tunnel_url;
+  else if(d.mesh_ip)txt+=' \u00b7 mesh:'+d.mesh_ip;
+  document.getElementById('devinfo').textContent=txt;
+}).catch(function(){document.getElementById('devinfo').textContent='no device info';});
+
+function c(tool,params){
+  document.getElementById('status').textContent='\u2192 '+tool+'\u2026';
+  return fetch('/execute',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({tool_name:tool,parameters:params||{}})
+  }).then(function(r){return r.json();}).then(function(j){
+    var msg=String(j.result||j.error||'ok').slice(0,200);
+    addLog(tool+': '+msg,!!j.error);
+    document.getElementById('status').textContent=msg;
+    return j.result;
+  }).catch(function(e){addLog('Error: '+e.message,true);});
+}
+
+function addLog(msg,err){
+  var el=document.getElementById('log');
+  var d=document.createElement('div');
+  d.className='ll '+(err?'er':'ok');
+  d.textContent=new Date().toTimeString().slice(0,8)+' '+msg;
+  el.insertBefore(d,el.firstChild);
+  while(el.children.length>80)el.removeChild(el.lastChild);
+}
+
+var fpsSel=document.getElementById('fps');
+fpsSel.value='${fps}';
+fpsSel.addEventListener('change',function(){
+  var tok=_auth?'&token='+encodeURIComponent(_auth.slice(7)):'';
+  document.getElementById('feed').src='/stream?fps='+this.value+tok;
+});
+
+document.querySelectorAll('[data-k]').forEach(function(b){
+  b.addEventListener('click',function(){c('keyevent',{key:b.dataset.k});});
+});
+
+function sendType(){
+  var v=document.getElementById('tin').value;
+  if(v.trim()){c('type_text',{text:v});document.getElementById('tin').value='';}
+}
+document.getElementById('tin').addEventListener('keydown',function(e){if(e.key==='Enter')sendType();});
+
+function sendShell(){
+  var v=document.getElementById('shin').value.trim();
+  if(v)c('root_shell',{command:v});
+}
+document.getElementById('shin').addEventListener('keydown',function(e){if(e.key==='Enter')sendShell();});
+
+function sendLaunch(){
+  var v=document.getElementById('pkgin').value.trim();
+  if(v)c('launch_app',{package:v});
+}
+function sendForceStop(){
+  var v=document.getElementById('pkgin').value.trim();
+  if(v)c('force_stop',{package:v});
+}
+document.getElementById('pkgin').addEventListener('keydown',function(e){if(e.key==='Enter')sendLaunch();});
+
+function reconnect(){
+  var dev=document.getElementById('adbin').value.trim()||undefined;
+  var st=document.getElementById('adbst');
+  st.textContent='connecting…';
+  fetch('/reconnect',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify(dev?{device:dev}:{})
+  }).then(function(r){return r.json();}).then(function(j){
+    st.textContent=(j.ok?'✓ connected: ':'✗ failed: ')+j.device;
+    st.style.color=j.ok?'var(--ok)':'var(--err)';
+    if(j.ok&&dev){document.getElementById('devinfo').textContent=j.device;}
+    addLog('reconnect: '+(j.ok?'ok':'failed')+' '+j.device,!j.ok);
+  }).catch(function(e){st.textContent='error: '+e.message;st.style.color='var(--err)';});
+}
+
+function fixPort(){
+  if(!confirm('Run root command to lock ADB to port 5555 permanently?'))return;
+  c('root_shell',{command:'setprop service.adb.tcp.port 5555; stop adbd; start adbd; sleep 1; mkdir -p /data/adb/service.d; printf "#!/system/bin/sh\\nsetprop service.adb.tcp.port 5555\\nstop adbd\\nstart adbd\\n" > /data/adb/service.d/99-adb-tcp.sh; chmod 755 /data/adb/service.d/99-adb-tcp.sh; getprop service.adb.tcp.port'}).then(function(res){
+    addLog('fixPort result: '+res,false);
+    setTimeout(function(){
+      var ip=document.getElementById('adbin').value.trim().split(':')[0];
+      var newDev=ip+':5555';
+      if(newDev.startsWith(':'))return;
+      document.getElementById('adbin').value=newDev;
+      addLog('Now run: reconnect with '+newDev,false);
+    },2000);
+  });
+}
+
+// Poll ADB status every 15s
+function pollAdb(){
+  _get('/api/info').then(function(r){return r.json();}).then(function(d){
+    var st=document.getElementById('adbst');
+    st.textContent=(d.adb_alive?'✓ connected: ':'✗ disconnected: ')+d.device;
+    st.style.color=d.adb_alive?'var(--ok)':'var(--err)';
+    document.getElementById('dot').style.background=d.adb_alive?'var(--ok)':'var(--err)';
+  }).catch(function(){});
+}
+pollAdb();
+setInterval(pollAdb,15000);
+
+function snap(){
+  c('screenshot',{}).then(function(b64){
+    if(!b64)return;
+    var a=document.createElement('a');
+    a.href='data:image/png;base64,'+b64;
+    a.download='screen_'+Date.now()+'.png';
+    document.body.appendChild(a);a.click();document.body.removeChild(a);
+  });
+}
+
+var wrap=document.getElementById('wrap');
+var feed=document.getElementById('feed');
+var ds=null;
+function imgXY(ex,ey){
+  var r=feed.getBoundingClientRect();
+  if(r.width===0||r.height===0)return{x:0,y:0};
+  return{
+    x:Math.max(0,Math.min(devW,Math.round((ex-r.left)/r.width*devW))),
+    y:Math.max(0,Math.min(devH,Math.round((ey-r.top)/r.height*devH)))
+  };
+}
+function pstart(ex,ey){ds={t:Date.now(),p:imgXY(ex,ey)};}
+function pend(ex,ey){
+  if(!ds)return;
+  var e=imgXY(ex,ey),dt=Date.now()-ds.t;
+  var dx=Math.abs(e.x-ds.p.x),dy=Math.abs(e.y-ds.p.y);
+  if(dx<20&&dy<20){
+    if(dt>600)c('long_press',{x:ds.p.x,y:ds.p.y,duration_ms:dt});
+    else c('tap_coords',{x:ds.p.x,y:ds.p.y});
+  }else{
+    c('swipe',{x1:ds.p.x,y1:ds.p.y,x2:e.x,y2:e.y,duration_ms:Math.min(Math.max(dt,50),1200)});
+  }
+  ds=null;
+}
+wrap.addEventListener('mousedown',function(e){e.preventDefault();pstart(e.clientX,e.clientY);});
+wrap.addEventListener('mouseup',function(e){pend(e.clientX,e.clientY);});
+wrap.addEventListener('mouseleave',function(){ds=null;});
+wrap.addEventListener('touchstart',function(e){e.preventDefault();var t=e.touches[0];pstart(t.clientX,t.clientY);},{passive:false});
+wrap.addEventListener('touchend',function(e){var t=e.changedTouches[0];pend(t.clientX,t.clientY);},{passive:false});
+wrap.addEventListener('touchcancel',function(){ds=null;},{passive:false});
+</script>
+</body>
+</html>`;
 
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
-function checkAuth(req, res) {
+function checkAuth(req, res, url) {
   if (!API_KEY) return true;
-  if ((req.headers["authorization"]||"")===`Bearer ${API_KEY}`) return true;
-  res.writeHead(401,{"Content-Type":"application/json"});
+  if ((req.headers["authorization"]||"") === `Bearer ${API_KEY}`) return true;
+  if (url && url.searchParams.get("token") === API_KEY) return true;
+  res.writeHead(401, {"Content-Type":"application/json","WWW-Authenticate":`Bearer realm="thereallywow"`});
   res.end(JSON.stringify({error:"Unauthorized"}));
   return false;
 }
@@ -835,6 +1350,15 @@ function buildOpenAIToolList() {
     T("stop_network_capture", "Stop tcpdump + pull pcap",   {remote_path:str}),
     T("get_notifications",  "Read notifications",            {}),
     T("device_info",        "Device model/OS/battery",       {}),
+    T("double_tap",         "Double-tap at x,y",             {x:num,y:num,delay_ms:num},["x","y"]),
+    T("force_stop",         "Force stop app by package",     {package:str},["package"]),
+    T("uninstall_apk",      "Uninstall app by package",      {package:str,keep_data:bool},["package"]),
+    T("clear_app_cache",    "Clear app data/cache",          {package:str},["package"]),
+    T("reboot",             "Reboot device",                 {mode:str}),
+    T("screen_record_start","Start screen recording",        {output:str,time_limit:num}),
+    T("screen_record_stop", "Stop + pull screen recording",  {remote_path:str,local_path:str}),
+    T("wait_for_text",      "Wait until text appears",       {text:str,timeout_ms:num,poll_ms:num},["text"]),
+    T("rotate_screen",      "Set screen rotation",           {rotation:str},["rotation"]),
   ];
 }
 
@@ -950,35 +1474,122 @@ async function executeTool(name, p) {
     case "stop_network_capture":  { adbRoot("pkill tcpdump"); const local="/data/data/com.termux/files/home/capture.pcap"; execSync(`adb -s ${DEVICE} pull "${p.remote_path||"/sdcard/capture.pcap"}" "${local}"`,{timeout:30000}); return `Saved to ${local}`; }
     case "get_notifications": return adbRoot("dumpsys notification --noredact 2>/dev/null | grep -A3 NotificationRecord | head -60")||"(none)";
     case "device_info":       { const props=["ro.product.model","ro.product.manufacturer","ro.build.version.release","ro.build.version.sdk","ro.serialno"]; return JSON.stringify(Object.fromEntries(props.map(p=>[p,adb(`getprop ${p}`)])),null,2); }
+    case "double_tap":        { await shellExecQueued(`input tap ${p.x} ${p.y} && sleep ${((p.delay_ms||100)/1000).toFixed(3)} && input tap ${p.x} ${p.y}`); invalidateUi(); return `Double tapped (${p.x},${p.y})`; }
+    case "force_stop":        { const o=adb(`am force-stop ${p.package}`); invalidateUi(); return o||`Force stopped ${p.package}`; }
+    case "uninstall_apk":     return adbExec(`uninstall${p.keep_data?" -k":""} ${p.package}`);
+    case "clear_app_cache":   return adb(`pm clear ${p.package}`);
+    case "reboot":            adbExec(`reboot${p.mode&&p.mode!=="normal"?" "+p.mode:""}`); return `Rebooting (${p.mode||"normal"})…`;
+    case "screen_record_start": { const safe=(p.output||"/sdcard/screenrecord.mp4").replace(/[^a-zA-Z0-9/_.-]/g,""); adbRoot(`screenrecord --time-limit ${p.time_limit||180} ${safe} &`); return `Recording → ${safe}`; }
+    case "screen_record_stop":  { adbRoot("pkill screenrecord 2>/dev/null; true"); await new Promise(r=>setTimeout(r,1200)); const dest=p.local_path||"/data/data/com.termux/files/home/screenrecord.mp4"; adbExec(`pull "${p.remote_path||"/sdcard/screenrecord.mp4"}" "${dest}"`); return `Saved: ${dest}`; }
+    case "wait_for_text":     { const el=await pollUntil(xml=>findElement(xml,{partialText:p.text}),p.timeout_ms||15000,p.poll_ms||500); return el?`Found "${p.text}" at (${el._x},${el._y})`:`"${p.text}" not found within ${p.timeout_ms||15000}ms`; }
+    case "rotate_screen":     { if(p.rotation==="auto"){adb("settings put system accelerometer_rotation 1");}else{const v={"0":0,"90":1,"180":2,"270":3}[p.rotation]??0;adb("settings put system accelerometer_rotation 0");adb(`settings put system user_rotation ${v}`);}return `Rotation: ${p.rotation}`; }
     default: throw new Error(`Unknown tool: ${name}`);
   }
 }
 
 function startHttpServer(port = 3456) {
+  const CORS = {
+    "Access-Control-Allow-Origin":  "*",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  };
+
   const srv = http.createServer(async (req, res) => {
+    Object.entries(CORS).forEach(([k,v]) => res.setHeader(k, v));
+
+    if (req.method === "OPTIONS") { res.writeHead(204); return res.end(); }
+
     const url = new URL(req.url, "http://localhost");
+
+    // ── Public routes (no auth) ────────────────────────────────────────────────
+
+    if (url.pathname === "/" || url.pathname === "/view") {
+      const fps = Math.min(10, Math.max(1, parseInt(url.searchParams.get("fps")||"2")));
+      res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"});
+      return res.end(VIEWER_HTML(port, fps, API_KEY));
+    }
+
+    // ── Auth-gated routes (token= accepted for browser <img> sources) ──────────
+
+    if (!checkAuth(req, res, url)) return;
 
     if (url.pathname === "/stream") {
       const fps = Math.min(10, Math.max(1, parseInt(url.searchParams.get("fps")||"2")));
-      res.writeHead(200, {"Content-Type":"multipart/x-mixed-replace;boundary=frame","Cache-Control":"no-cache","Connection":"keep-alive","Access-Control-Allow-Origin":"*"});
+      res.writeHead(200, {"Content-Type":"multipart/x-mixed-replace;boundary=frame","Cache-Control":"no-cache","Connection":"keep-alive"});
       streamClients.set(res, fps); rescheduleStream();
-      req.on("close", () => { streamClients.delete(res); rescheduleStream(); });
+      const cleanup = () => { streamClients.delete(res); rescheduleStream(); };
+      req.on("close", cleanup);
+      res.on("close", cleanup);
       return;
     }
 
-    if (url.pathname === "/view") {
-      const fps = Math.min(10, Math.max(1, parseInt(url.searchParams.get("fps")||"2")));
-      res.writeHead(200, {"Content-Type":"text/html"});
-      return res.end(VIEWER_HTML(port, fps));
+    if (url.pathname === "/screenshot.png" && req.method === "GET") {
+      try {
+        const buf = takeScreenshot();
+        res.writeHead(200, {"Content-Type":"image/png","Cache-Control":"no-cache"});
+        return res.end(buf);
+      } catch(e) {
+        res.writeHead(500); return res.end(e.message);
+      }
     }
 
-    if (!checkAuth(req, res)) return;
-
-    const body = await new Promise(r => { let d=""; req.on("data",c=>d+=c); req.on("end",()=>r(d)); });
+    // Body reader with 1 MB limit
+    const body = await new Promise((resolve, reject) => {
+      let d = "", size = 0;
+      req.on("data", chunk => {
+        size += chunk.length;
+        if (size > 1024 * 1024) { req.destroy(); return reject(new Error("Request body too large")); }
+        d += chunk;
+      });
+      req.on("end", () => resolve(d));
+      req.on("error", reject);
+    }).catch(e => { res.writeHead(413, {"Content-Type":"application/json"}); res.end(JSON.stringify({error:e.message})); return null; });
+    if (body === null) return;
 
     if (url.pathname === "/health") {
       res.writeHead(200, {"Content-Type":"application/json"});
-      return res.end(JSON.stringify({status:"ok",server:"moto-device-control",version:"3.0.0",viewers:streamClients.size,stream:`http://localhost:${port}/view`}));
+      return res.end(JSON.stringify({status:"ok",server:"thereallywow",version:"3.1.0",device:DEVICE,device_w:DEVICE_W,device_h:DEVICE_H,adb_alive:adbIsAlive(),viewers:streamClients.size,tools:buildOpenAIToolList().length,tunnel:getTunnelUrl()}));
+    }
+
+    if (url.pathname === "/api/info") {
+      const PORT = process.env.PORT || 3456;
+      const tunnel = getTunnelUrl();
+      res.writeHead(200, {"Content-Type":"application/json"});
+      return res.end(JSON.stringify({
+        device:DEVICE, device_w:DEVICE_W, device_h:DEVICE_H,
+        adb_alive:adbIsAlive(),
+        mesh_ip:MESH_IP,
+        tunnel_url:tunnel,
+        stream:`/stream?fps=2`, viewer:`/`,
+        tools:buildOpenAIToolList().length, version:"3.1.0",
+        agnes:{
+          local:`http://localhost:${PORT}`,
+          mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
+          public: tunnel || null,
+          tools_path:`/tools`,
+          execute_path:`/execute`,
+          openai_compatible:true,
+          system_prompt:"You control a rooted Android device via 44 thereallywow tools. screenshot/stream to see screen. tap_coords/multi_touch/swipe for input. root_shell for root commands. All tool calls POST to /execute with {tool_name, parameters}."
+        }
+      }));
+    }
+
+    if (url.pathname === "/reconnect" && req.method === "POST") {
+      let newDev = null;
+      try { newDev = JSON.parse(body).device || null; } catch {}
+      const ok = adbReconnect(newDev || undefined);
+      // Persist new device to .env if changed
+      if (newDev && newDev !== DEVICE) {
+        try {
+          const __dir = dirname(fileURLToPath(import.meta.url));
+          const envPath = join(__dir, ".env");
+          const lines = readFileSync(envPath, "utf8").split("\n");
+          const updated = lines.map(l => l.startsWith("ADB_DEVICE=") ? `ADB_DEVICE=${DEVICE}` : l).join("\n");
+          writeFileSync(envPath, updated);
+        } catch {}
+      }
+      res.writeHead(ok ? 200 : 503, {"Content-Type":"application/json"});
+      return res.end(JSON.stringify({ok, device:DEVICE, adb_alive:adbIsAlive()}));
     }
 
     if (url.pathname === "/tools" && req.method === "GET") {
@@ -998,10 +1609,11 @@ function startHttpServer(port = 3456) {
       }
     }
 
-    res.writeHead(404); res.end();
+    res.writeHead(404, {"Content-Type":"application/json"});
+    res.end(JSON.stringify({error:"Not found"}));
   });
   srv.listen(port, "0.0.0.0", () =>
-    process.stderr.write(`[moto-mcp] HTTP :${port} — viewer: http://localhost:${port}/view\n`)
+    process.stderr.write(`[thereallywow] HTTP :${port} → http://localhost:${port}/\n`)
   );
 }
 
@@ -1010,9 +1622,9 @@ function startHttpServer(port = 3456) {
 const mode = process.env.MCP_MODE || "stdio";
 if (mode === "http") {
   startHttpServer(parseInt(process.env.PORT || "3456"));
-  process.stderr.write("[moto-mcp] HTTP mode — Agnes AI / OpenAI compatible\n");
+  process.stderr.write("[thereallywow] HTTP mode — OpenAI/Agnes compatible\n");
 } else {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  process.stderr.write("[moto-mcp] stdio mode — OpenClaw / Claude Desktop\n");
+  process.stderr.write("[thereallywow] stdio mode — Claude Desktop / OpenClaw\n");
 }

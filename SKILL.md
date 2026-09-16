@@ -1,54 +1,151 @@
-# Moto Device Control Skill
+# thereallywow — Agnes AI Skill Reference
 
-Control a rooted Android device (Moto G 5G 2022) over ADB via WiFi.
-Capabilities: UI navigation, tap/swipe/type input, root shell, app launching, network traffic capture, screenshots.
+Android device control via 44 tools over MCP (stdio) or HTTP (`/tools` + `/execute`).
+Full tool schemas: `GET /tools` or `GET /api/info` for live endpoints.
 
-## Setup
+---
 
-```bash
-# Set the ADB device address
-export ADB_DEVICE="192.168.1.168:5556"
+## Integration
 
-# Start HTTP server for Agnes AI tool calling
-MCP_MODE=http PORT=3456 node ~/moto-mcp/server.mjs &
+**MCP (OpenClaw / Claude Desktop):** see `openclaw-config.json`
+
+**HTTP (direct):**
+```
+GET  /tools          → OpenAI function schema for all 44 tools
+POST /execute        → { "tool_name": "...", "parameters": { ... } }
+GET  /api/info       → live endpoints, mesh IP, tunnel URL, this system prompt
+GET  /stream?fps=2   → MJPEG live feed
 ```
 
-## Tool Endpoint
+Auth: `Authorization: Bearer <MCP_API_KEY>` when key is configured.
 
-- **Base URL:** `http://localhost:3456`
-- **Tool list:** `GET /tools` → returns OpenAI-compatible tool definitions
-- **Execute:** `POST /execute` → `{ "tool_name": "...", "parameters": { ... } }`
-- **Health:** `GET /health`
+---
 
-## Tools Available
+## Situational Awareness
 
-| Tool | Description |
-|------|-------------|
-| `get_ui_tree` | Read current screen UI layout as text (no image needed) |
-| `tap_by_text` | Tap any visible UI element by its text label |
-| `tap_coords` | Tap specific pixel coordinates |
-| `swipe` | Swipe gesture between two points |
-| `type_text` | Type text into the focused field |
-| `keyevent` | Send key events (BACK, HOME, ENTER, VOLUME_UP, etc.) |
-| `screenshot` | Capture screen as base64 PNG |
-| `launch_app` | Launch any installed app by package name |
-| `root_shell` | Execute arbitrary root shell commands via Magisk |
-| `list_packages` | List installed app packages |
-| `get_current_app` | Get currently active app/activity |
-| `start_network_capture` | Start tcpdump packet capture (root) |
-| `stop_network_capture` | Stop capture and retrieve pcap file |
-| `get_notifications` | Read all current device notifications |
-| `device_info` | Device model, Android version, battery, network |
+**Fastest read — no image processing:**
+```
+get_ui_tree → full accessibility tree as XML text
+find_element / wait_for_text → parse the tree without a screenshot
+```
 
-## Agnes AI Integration
+**When you need to see the screen:**
+```
+screenshot → base64 PNG (lossless, use for pixel work)
+screen_region(x,y,w,h) → crop to area of interest (faster)
+pixel_color(x,y) → single pixel RGBA (fastest)
+```
 
-Use this skill with Agnes AI's tool calling by pointing the model to the HTTP server.
-Set `AGNES_API_KEY` and call `https://apihub.agnes-ai.com/v1/chat/completions` with
-the tool list from `GET /tools` injected into the `tools` array.
+**Rule:** always try `get_ui_tree` first. Only call `screenshot` when UI tree is insufficient (image content, game state, canvas rendering).
 
-## Smart Navigation Strategy
+---
 
-1. Always call `get_ui_tree` first — it returns full UI as text, no image processing
-2. Use `tap_by_text` to tap buttons by label — no coordinate guessing
-3. Only call `screenshot` when you need to visually verify something
-4. Use `root_shell` for system-level operations (file access, network, processes)
+## Input Decision Tree
+
+| Situation | Tool |
+|---|---|
+| Button/link with visible text | `tap_by_text` |
+| Known coordinates | `tap_coords` |
+| Double-tap | `double_tap` |
+| Hold for context menu | `long_press` |
+| Scroll a list | `scroll` |
+| Swipe between screens | `swipe` |
+| Enter text in a field | `type_text` |
+| Hardware keys (Back, Home, Enter…) | `keyevent` |
+| Wait for a screen to load | `wait_for_text` or `wait_for_element` |
+
+---
+
+## Gaming
+
+All gaming tools require root (Magisk `su`). Use `sendevent` Type B multi-touch — bypasses Android input filtering that blocks macro apps.
+
+```
+multi_touch        → simultaneous fingers at exact coordinates
+rapid_tap          → auto-clicker with configurable rate/count
+joystick           → analog stick hold + direction
+swipe_path         → multi-waypoint gesture (drag, draw)
+hold_and_do        → hold finger A while tapping B (common attack pattern)
+pinch              → zoom in/out
+batch_actions      → sequence of mixed actions in one call
+repeat(n, batch)   → repeat a batch N times with interval
+```
+
+**Game loop pattern:**
+1. `screenshot` → read state
+2. Decide action based on game state
+3. Execute with gaming tool
+4. `wait_for_text` or `screenshot` to confirm result
+5. Repeat
+
+---
+
+## System Operations
+
+```
+root_shell(command)        → arbitrary root command via Magisk su
+device_info                → model, Android version, battery, serial
+get_current_app            → foreground package + activity
+list_packages              → all installed packages
+set_perf_mode(performance) → lock CPU to max frequency (gaming/benchmarks)
+set_perf_mode(balanced)    → restore default governor
+rotate_screen(0|90|180|270|auto)
+reboot(normal|recovery|bootloader)
+```
+
+---
+
+## App Management
+
+```
+launch_app(package)        → start app by package name
+force_stop(package)        → kill app
+clear_app_cache(package)   → wipe data + cache
+install_apk(path)          → install from device path
+uninstall_apk(package)
+```
+
+---
+
+## Files
+
+```
+push_file(local, remote)   → send file to device
+pull_file(remote, local)   → retrieve file from device
+screen_record_start        → background MP4 recording
+screen_record_stop         → stop + pull video to host
+```
+
+---
+
+## Network & Notifications
+
+```
+start_network_capture(output) → tcpdump PCAP in background
+stop_network_capture          → stop + pull PCAP
+get_notifications             → all active notifications as text
+```
+
+---
+
+## Fixing Devices
+
+1. `get_ui_tree` — read what's on screen
+2. `root_shell("dumpsys activity")` — get system state
+3. `root_shell("logcat -d -t 50")` — last 50 log lines
+4. `get_current_app` — confirm which app is foreground
+5. `force_stop` / `clear_app_cache` — reset stuck app
+6. `root_shell("pm disable-user --user 0 <pkg>")` — disable bloatware
+7. `reboot` — last resort
+
+---
+
+## Key Packages (common targets)
+
+| App | Package |
+|---|---|
+| Settings | `com.android.settings` |
+| Chrome | `com.android.chrome` |
+| Play Store | `com.android.vending` |
+| Files | `com.google.android.documentsui` |
+| Camera | `com.android.camera2` |

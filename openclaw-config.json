@@ -1,12 +1,35 @@
 {
+  "_comment": "thereallywow — Agnes AI device control via OpenClaw MCP",
+  "_usage": "Copy the mcpServers block into your OpenClaw/Claude Desktop config",
+
   "mcpServers": {
-    "moto-device-control": {
+    "thereallywow": {
       "command": "node",
       "args": ["/data/data/com.termux/files/home/moto-mcp/server.mjs"],
       "env": {
-        "ADB_DEVICE": "172.18.71.77:38665",
         "MCP_MODE": "stdio"
       }
     }
+  },
+
+  "_http_endpoints": {
+    "local":  "http://10.27.160.170:3456",
+    "mesh":   "http://100.64.0.1:3456",
+    "tools":  "GET  /tools   → OpenAI function list",
+    "exec":   "POST /execute → {tool_name, parameters}",
+    "stream": "GET  /stream?fps=2 → MJPEG",
+    "gui":    "GET  /        → web control panel"
+  },
+
+  "_agnes_system_prompt": "You control a rooted Android device via 44 thereallywow tools. See screen with screenshot/stream. Control it with tap_coords, multi_touch, swipe, type_text, keyevent. Root access via root_shell (Magisk su). When playing games: screenshot to see state, use gaming tools for input. When fixing devices: root_shell for diagnostics, get_ui_tree for UI, wait_for_text to wait for screens.",
+
+  "_tool_categories": {
+    "vision":  ["screenshot","screen_region","pixel_color","get_ui_tree","get_stream_url"],
+    "input":   ["tap_coords","tap_by_text","long_press","swipe","type_text","keyevent","double_tap","scroll"],
+    "gaming":  ["multi_touch","rapid_tap","joystick","swipe_path","hold_and_do","pinch","repeat","batch_actions"],
+    "system":  ["root_shell","launch_app","force_stop","device_info","rotate_screen","set_perf_mode","reboot"],
+    "files":   ["push_file","pull_file","install_apk","uninstall_apk","clear_app_cache"],
+    "network": ["start_network_capture","stop_network_capture","get_notifications"],
+    "wait":    ["wait_for_element","wait_for_text","find_element"]
   }
 }

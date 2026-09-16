@@ -24,7 +24,7 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENV_FILE   = SCRIPT_DIR / ".env"
 PID_FILE   = SCRIPT_DIR / "server.pid"
 LOG_FILE   = SCRIPT_DIR / "server.log"
-SERVER_URL = "http://localhost:3456"
+SERVER_URL = f"http://localhost:{int(ENV.get('PORT', 3456))}"
 NODE_SCRIPT = SCRIPT_DIR / "server.mjs"
 
 def load_env():
@@ -36,9 +36,23 @@ def load_env():
                 env[m.group(1)] = m.group(2).strip()
     return env
 
-ENV = load_env()
-DEVICE = ENV.get("ADB_DEVICE", os.environ.get("ADB_DEVICE", ""))
-PORT   = int(ENV.get("PORT", 3456))
+def set_env_var(key, value):
+    lines = ENV_FILE.read_text().splitlines() if ENV_FILE.exists() else []
+    found = False
+    new_lines = []
+    for line in lines:
+        if line.startswith(f"{key}="):
+            new_lines.append(f"{key}={value}"); found = True
+        else:
+            new_lines.append(line)
+    if not found:
+        new_lines.append(f"{key}={value}")
+    ENV_FILE.write_text("\n".join(new_lines) + "\n")
+
+ENV     = load_env()
+DEVICE  = ENV.get("ADB_DEVICE", os.environ.get("ADB_DEVICE", ""))
+PORT    = int(ENV.get("PORT", 3456))
+API_KEY = ENV.get("MCP_API_KEY", os.environ.get("MCP_API_KEY", ""))
 
 # ── Colours ────────────────────────────────────────────────────────────────────
 def c(code): return f"\033[{code}m" if sys.stdout.isatty() else ""
@@ -50,16 +64,24 @@ def err(s):  print(f"{RED}✗{RESET} {s}", file=sys.stderr)
 def info(s): print(f"{CYAN}→{RESET} {s}")
 
 # ── HTTP helpers ───────────────────────────────────────────────────────────────
+def _auth_headers(extra=None):
+    h = {"Content-Type": "application/json"}
+    if API_KEY:
+        h["Authorization"] = f"Bearer {API_KEY}"
+    if extra:
+        h.update(extra)
+    return h
+
 def _post(path, body):
     data = json.dumps(body).encode()
-    req  = Request(f"{SERVER_URL}{path}", data=data,
-                   headers={"Content-Type": "application/json"})
+    req  = Request(f"{SERVER_URL}{path}", data=data, headers=_auth_headers())
     with urlopen(req, timeout=60) as r:
         return json.loads(r.read())
 
 def health():
     try:
-        with urlopen(f"{SERVER_URL}/health", timeout=3) as r:
+        req = Request(f"{SERVER_URL}/health", headers=_auth_headers())
+        with urlopen(req, timeout=3) as r:
             return json.loads(r.read())
     except Exception:
         return None
@@ -100,13 +122,17 @@ def cmd_start():
             stdout=log, stderr=log,
             start_new_session=True
         )
-    PID_FILE.write_text(str(proc.pid))
-    for _ in range(10):
+    for _ in range(16):
         time.sleep(0.5)
+        if proc.poll() is not None:
+            err(f"Server exited immediately (code {proc.returncode}) — check: python reallywow.py log")
+            return
         if health():
+            PID_FILE.write_text(str(proc.pid))
             ok(f"Server started (PID {proc.pid}) — {SERVER_URL}")
             return
-    warn("Server slow to start — check: python reallywow.py log")
+    proc.terminate()
+    err("Server failed to become healthy — killed. Check: python reallywow.py log")
 
 def cmd_stop():
     pid = server_pid()
@@ -192,6 +218,21 @@ def cmd_launch(args):
     ensure_server()
     ok(call("launch_app", package=args[0]))
 
+def cmd_connect(args):
+    """Connect to a new ADB address, update .env, and live-switch the running server."""
+    if not args:
+        err("Usage: connect <IP:PORT>"); return
+    addr = args[0]
+    set_env_var("ADB_DEVICE", addr)
+    ok(f".env updated → {addr}")
+    subprocess.run(["adb", "connect", addr], capture_output=False)
+    if health():
+        try:
+            resp = _post("/reconnect", {"device": addr})
+            ok(f"Server live-switched to {addr}") if resp.get("ok") else warn(str(resp))
+        except Exception as e:
+            warn(f"Server reconnect failed: {e}")
+
 def cmd_stream(args):
     ensure_server()
     fps = int(args[0]) if args else 10
@@ -230,6 +271,58 @@ def cmd_device(args):
     ensure_server()
     print(call("device_info"))
 
+def cmd_tunnel(args):
+    """Open or manage the public bore tunnel for Agnes remote access."""
+    sub = args[0] if args else "start"
+    script = SCRIPT_DIR / "network" / "tunnel-start.sh"
+    extra = args[1:] if len(args) > 1 else []
+    if sub in ("stop", "status"):
+        subprocess.run(["bash", str(script), sub])
+    elif sub == "url":
+        url_file = SCRIPT_DIR / "network" / "tunnel.url"
+        if url_file.exists():
+            ok(url_file.read_text().strip())
+        else:
+            warn("No tunnel running. Start with: tunnel start")
+    else:
+        subprocess.run(["bash", str(script)] + extra)
+
+def cmd_mesh(args):
+    """Manage the WireGuard device mesh."""
+    sub = args[0] if args else "status"
+    rest = args[1:]
+    net_dir = SCRIPT_DIR / "network"
+    scripts = {
+        "init":     net_dir / "mesh-init.sh",
+        "start":    net_dir / "mesh-start.sh",
+        "discover": net_dir / "mesh-discover.sh",
+        "peer":     net_dir / "peer-add.sh",
+        "relay":    net_dir / "relay-setup.sh",
+        "status":   None,
+    }
+    if sub == "status":
+        # Show WireGuard interface status
+        result = subprocess.run(["wg", "show"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout:
+            print(result.stdout)
+        else:
+            # Try via root (Android needs root for kernel WG)
+            result = subprocess.run(["su", "-c", "wg show"], capture_output=True, text=True)
+            print(result.stdout or "WireGuard not running. Start with: reallywow mesh start")
+        return
+    if sub in scripts and scripts[sub]:
+        cmd = ["bash", str(scripts[sub])] + rest
+        subprocess.run(cmd)
+    else:
+        err(f"Unknown mesh subcommand: {sub}")
+        info("Usage: mesh [init|start|discover|peer|relay|status]")
+
+def cmd_qr(args):
+    """Print a QR code for pairing a new device into the mesh."""
+    name = args[0] if args else "new-device"
+    net_dir = SCRIPT_DIR / "network"
+    subprocess.run(["bash", str(net_dir / "peer-add.sh"), "--android", name])
+
 # ── Interactive REPL ───────────────────────────────────────────────────────────
 REPL_HELP = f"""
 {BOLD}Commands:{RESET}
@@ -241,13 +334,20 @@ REPL_HELP = f"""
   shell <cmd>               root shell command
   launch <pkg>              launch app by package name
   stream [fps]              live MJPEG stream URL
+  connect <IP:PORT>         switch to a new ADB device
+  tunnel [start|stop|status|url]  public bore tunnel
+  mesh [init|start|discover|peer|relay|status]  WireGuard mesh
+  qr [name]                 QR code to pair a new device into mesh
+  discover                  find ADB devices on local network + mesh
   ui                        dump UI tree
   device                    device info
   tool <name> [k=v …]       any MCP tool directly
-  start / stop / status     server control
+  start / stop / restart / status  server control
   log                       tail server log
   help                      show this help
   quit / exit               exit
+
+  Aliases: click=tap  input=type  keyevent=key  open=launch  sh=shell
 """
 
 def repl():
@@ -276,13 +376,19 @@ def repl():
         "shell": cmd_shell, "sh": cmd_shell,
         "launch": cmd_launch, "open": cmd_launch,
         "stream": cmd_stream,
+        "connect": cmd_connect,
         "ui": lambda a: cmd_ui(a),
         "device": lambda a: cmd_device(a),
         "tool": cmd_tool,
         "start": lambda a: cmd_start(),
         "stop": lambda a: cmd_stop(),
+        "restart": lambda a: (cmd_stop(), time.sleep(1), cmd_start()),
         "status": lambda a: cmd_status(),
         "log": lambda a: cmd_log(),
+        "tunnel": cmd_tunnel,
+        "mesh": cmd_mesh,
+        "qr": cmd_qr,
+        "discover": lambda a: cmd_mesh(["discover"]),
         "help": lambda a: print(REPL_HELP),
     }
 
@@ -338,6 +444,11 @@ def main():
         "sh":         lambda: cmd_shell(rest),
         "launch":     lambda: cmd_launch(rest),
         "stream":     lambda: cmd_stream(rest),
+        "connect":    lambda: cmd_connect(rest),
+        "tunnel":     lambda: cmd_tunnel(rest),
+        "mesh":       lambda: cmd_mesh(rest),
+        "qr":         lambda: cmd_qr(rest),
+        "discover":   lambda: cmd_mesh(["discover"]),
         "ui":         lambda: cmd_ui(rest),
         "device":     lambda: cmd_device(rest),
         "tool":       lambda: cmd_tool(rest),
