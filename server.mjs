@@ -974,17 +974,14 @@ body{
 }
 body::before{
   content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(ellipse 80% 40% at 50% 108%,rgba(150,0,22,.4) 0%,transparent 65%),
-    radial-gradient(ellipse 45% 45% at 8% 92%,rgba(100,0,14,.22) 0%,transparent 60%),
-    radial-gradient(ellipse 35% 55% at 92% 88%,rgba(80,0,10,.16) 0%,transparent 58%);
+  background:radial-gradient(ellipse 100% 55% at 50% 110%,rgba(140,0,20,.28) 0%,transparent 70%);
   animation:embers 9s ease-in-out infinite alternate;
 }
-@keyframes embers{0%{opacity:.75}100%{opacity:1;filter:brightness(1.25)}}
+@keyframes embers{0%{opacity:.7}100%{opacity:1}}
 header,main,#statusbar{position:relative;z-index:1}
 header{
   background:var(--glass);
-  backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border-bottom:1px solid var(--br);
   padding:0 12px;height:46px;display:flex;align-items:center;gap:10px;flex-shrink:0;
   box-shadow:0 4px 28px rgba(0,0,0,.95);
@@ -1026,13 +1023,9 @@ main{flex:1;display:flex;overflow:hidden;min-height:0}
   cursor:crosshair;user-select:none;-webkit-user-select:none;touch-action:none;
   min-width:0;
 }
-#wrap::after{
-  content:'';position:absolute;inset:0;pointer-events:none;z-index:2;
-  background:repeating-linear-gradient(to bottom,transparent 0,transparent 3px,rgba(0,0,0,.12) 3px,rgba(0,0,0,.12) 4px);
-}
 #wrap::before{
   content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
-  background:radial-gradient(ellipse 90% 90% at 50% 50%,transparent 60%,rgba(0,0,0,.5) 100%);
+  background:radial-gradient(ellipse 85% 85% at 50% 50%,transparent 55%,rgba(0,0,0,.35) 100%);
 }
 #feed{max-width:100%;max-height:100%;object-fit:contain;display:block;pointer-events:none;position:relative;z-index:1}
 #paused-overlay{
@@ -1045,7 +1038,7 @@ main{flex:1;display:flex;overflow:hidden;min-height:0}
 aside{
   width:232px;flex-shrink:0;
   background:var(--glass2);
-  backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
   border-left:1px solid var(--br);
   display:flex;flex-direction:column;overflow-y:auto;
   box-shadow:-6px 0 35px rgba(0,0,0,.85);
