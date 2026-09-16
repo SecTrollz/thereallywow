@@ -1037,24 +1037,37 @@ header{
 #send:hover{opacity:.9}
 #send:disabled{opacity:.35;cursor:not-allowed}
 
-/* Settings modal */
-#modal{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);
+/* Overlay / modal shared */
+.overlay{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.75);
   align-items:center;justify-content:center;padding:20px}
-#modal.show{display:flex}
+.overlay.show{display:flex}
 .modal-box{background:#15151f;border:1px solid var(--border);border-radius:var(--r);
-  padding:20px;width:100%;max-width:400px;display:flex;flex-direction:column;gap:14px}
-.modal-box h3{font-size:15px;font-weight:600}
-.modal-box label{font-size:11px;color:var(--text-dim);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
-.modal-box input{background:var(--surface);color:var(--text);border:1px solid var(--border);
-  border-radius:var(--r-sm);font:inherit;font-size:13px;padding:0 10px;height:40px;width:100%}
-.modal-box input:focus{outline:none;border-color:var(--border-focus)}
+  padding:24px;width:100%;max-width:420px;display:flex;flex-direction:column;gap:16px}
+.modal-box h3{font-size:16px;font-weight:700}
+.modal-box h3 small{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:6px}
+.modal-box p{font-size:13px;color:var(--text-dim);line-height:1.55}
+.modal-box label{font-size:11px;color:var(--text-dim);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.modal-box input,.modal-box textarea{background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--r-sm);font:inherit;font-size:13px;padding:8px 10px;width:100%}
+.modal-box input{height:42px;padding:0 10px}
+.modal-box textarea{resize:none;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5}
+.modal-box input:focus,.modal-box textarea:focus{outline:none;border-color:var(--border-focus);background:var(--surface-2)}
 .modal-row{display:flex;gap:8px}
 .modal-row button{flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);
-  border-radius:var(--r-sm);font:inherit;font-size:13px;height:40px;cursor:pointer;transition:background .12s}
-.modal-row button:hover{background:var(--surface-2)}
-.modal-row button.primary{background:var(--accent);color:#0e0e14;border-color:var(--accent);font-weight:600}
-.modal-row button.primary:hover{opacity:.9}
-.modal-note{font-size:11px;color:var(--text-muted)}
+  border-radius:var(--r-sm);font:inherit;font-size:13px;height:42px;cursor:pointer;transition:background .12s,color .12s}
+.modal-row button:hover{background:var(--surface-2);color:#fff}
+.modal-row button.primary{background:var(--accent);color:#0e0e14;border:none;font-weight:700}
+.modal-row button.primary:hover{opacity:.88}
+.modal-note{font-size:11px;color:var(--text-muted);line-height:1.5}
+.copy-row{display:flex;gap:6px;align-items:stretch}
+.copy-row textarea{flex:1;min-height:90px}
+.copy-row button{flex-shrink:0;width:52px;background:var(--surface);color:var(--text-dim);
+  border:1px solid var(--border);border-radius:var(--r-sm);font:inherit;font-size:11px;cursor:pointer;transition:background .12s}
+.copy-row button:hover{background:var(--surface-2);color:#fff}
+.step-dots{display:flex;gap:6px;justify-content:center}
+.step-dots span{width:7px;height:7px;border-radius:50%;background:var(--border)}
+.step-dots span.active{background:var(--accent)}
+.check{color:var(--ok);font-size:18px}
 
 @media(max-width:480px){
   .msg{max-width:94%}
@@ -1086,22 +1099,85 @@ header{
   <textarea id="input" placeholder="Tell Agnes what to do…" rows="1"></textarea>
   <button id="send" onclick="send()">Send</button>
 </div>
-<div id="modal">
+<!-- Onboarding wizard -->
+<div id="onboard" class="overlay">
+  <div class="modal-box">
+    <div class="step-dots"><span id="d0" class="active"></span><span id="d1"></span><span id="d2"></span></div>
+
+    <!-- Step 0: Enter OpenClaw key -->
+    <div id="step0">
+      <h3>Connect Agnes <small>Step 1 of 3</small></h3>
+      <p>Enter your OpenClaw API key. Agnes uses this to think and respond.</p>
+      <div>
+        <label>OpenClaw API Key</label>
+        <input id="ob-key" type="password" placeholder="Paste your OpenClaw key here…" autocomplete="new-password">
+      </div>
+      <div>
+        <label>OpenClaw Base URL</label>
+        <input id="ob-url" type="url" placeholder="https://api.openai.com/v1" autocorrect="off" autocapitalize="off">
+      </div>
+      <div>
+        <label>Model <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
+        <input id="ob-model" type="text" placeholder="gpt-4o">
+      </div>
+      <p class="modal-note">Your key is saved to .env on this device only — never sent anywhere else.</p>
+      <div class="modal-row">
+        <button onclick="closeOnboard()">Skip for now</button>
+        <button class="primary" onclick="onboardStep1()">Continue</button>
+      </div>
+    </div>
+
+    <!-- Step 1: Copy server config into OpenClaw -->
+    <div id="step1" style="display:none">
+      <h3>Add this server to OpenClaw <small>Step 2 of 3</small></h3>
+      <p>Copy this config into your OpenClaw MCP settings so it can reach this device.</p>
+      <div class="copy-row">
+        <textarea id="ob-config" rows="5" readonly></textarea>
+        <button onclick="copyConfig()" id="copybtn">Copy</button>
+      </div>
+      <p class="modal-note">In OpenClaw: Settings → MCP Servers → Add → paste the JSON above.</p>
+      <div class="modal-row">
+        <button onclick="onboardBack()">Back</button>
+        <button class="primary" onclick="onboardStep2()">Done</button>
+      </div>
+    </div>
+
+    <!-- Step 2: All set -->
+    <div id="step2" style="display:none">
+      <h3>You're all set</h3>
+      <p><span class="check">&#10003;</span> Agnes is connected and ready to control the device.</p>
+      <p style="margin-top:4px">Try asking Agnes to take a screenshot, open an app, or describe what's on screen.</p>
+      <div class="modal-row">
+        <button class="primary" onclick="closeOnboard()">Start chatting</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Settings modal -->
+<div id="modal" class="overlay">
   <div class="modal-box">
     <h3>Agnes Settings</h3>
     <div>
-      <label>OpenClaw / Agnes API base URL</label>
+      <label>OpenClaw Base URL</label>
       <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1">
     </div>
     <div>
-      <label>API Key (Agnes / OpenClaw)</label>
-      <input id="cfg-key" type="password" placeholder="sk-…" autocomplete="new-password">
+      <label>OpenClaw API Key</label>
+      <input id="cfg-key" type="password" placeholder="(already set — paste to change)" autocomplete="new-password">
     </div>
     <div>
       <label>Model</label>
       <input id="cfg-model" type="text" placeholder="gpt-4o">
     </div>
-    <p class="modal-note">Settings are saved to .env on the server and persist across restarts.</p>
+    <div>
+      <label>Server config for OpenClaw</label>
+      <div class="copy-row">
+        <textarea id="cfg-config" rows="4" readonly></textarea>
+        <button onclick="copyConfig2()" id="copybtn2">Copy</button>
+      </div>
+    </div>
+    <p class="modal-note">Saved to .env on device. Persists across restarts.</p>
     <div class="modal-row">
       <button onclick="closeSettings()">Cancel</button>
       <button class="primary" onclick="saveSettings()">Save</button>
@@ -1217,35 +1293,93 @@ document.getElementById('input').addEventListener('keydown',function(e){
 });
 document.getElementById('input').addEventListener('input',autoResize);
 
-/* Settings */
+function setEnv(k,v){
+  return fetch('/api/setenv',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({key:k,value:v})
+  }).then(function(r){return r.json();}).then(function(j){if(!j.ok)throw new Error(j.error);});
+}
+
+function loadConfig(targetEl){
+  fetch('/api/openclaw-config',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
+    var el=document.getElementById(targetEl);
+    if(el)el.value=JSON.stringify({mcpServers:d.mcpServers},null,2);
+  }).catch(function(){});
+}
+function copyConfig(){
+  var t=document.getElementById('ob-config');
+  navigator.clipboard.writeText(t.value).then(function(){
+    var b=document.getElementById('copybtn');b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},2000);
+  }).catch(function(){t.select();document.execCommand('copy');});
+}
+function copyConfig2(){
+  var t=document.getElementById('cfg-config');
+  navigator.clipboard.writeText(t.value).then(function(){
+    var b=document.getElementById('copybtn2');b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},2000);
+  }).catch(function(){t.select();document.execCommand('copy');});
+}
+
+/* Onboarding wizard */
+function showOnboard(){
+  loadConfig('ob-config');
+  setDot(0);
+  ['step0','step1','step2'].forEach(function(s,i){document.getElementById(s).style.display=i===0?'':'none';});
+  document.getElementById('onboard').classList.add('show');
+}
+function closeOnboard(){document.getElementById('onboard').classList.remove('show');}
+function setDot(n){
+  for(var i=0;i<3;i++)document.getElementById('d'+i).className=i===n?'active':'';
+}
+function onboardStep1(){
+  var key=document.getElementById('ob-key').value.trim();
+  var url=document.getElementById('ob-url').value.trim();
+  var model=document.getElementById('ob-model').value.trim();
+  if(!key){document.getElementById('ob-key').focus();return;}
+  var saves=[setEnv('AGNES_API_KEY',key)];
+  if(url)saves.push(setEnv('AGNES_BASE_URL',url));
+  if(model)saves.push(setEnv('AGNES_MODEL',model));
+  Promise.all(saves).then(function(){
+    document.getElementById('step0').style.display='none';
+    document.getElementById('step1').style.display='';
+    setDot(1);
+    loadConfig('ob-config');
+  }).catch(function(e){alert('Could not save: '+e.message);});
+}
+function onboardBack(){
+  document.getElementById('step1').style.display='none';
+  document.getElementById('step0').style.display='';
+  setDot(0);
+}
+function onboardStep2(){
+  document.getElementById('step1').style.display='none';
+  document.getElementById('step2').style.display='';
+  setDot(2);
+}
+document.getElementById('onboard').addEventListener('click',function(e){if(e.target===this)closeOnboard();});
+
+/* Check on load — show onboarding if Agnes key not set */
+fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
+  if(d.keys&&!d.keys.agnes_key_set){showOnboard();}
+}).catch(function(){});
+
+/* Settings modal */
 function openSettings(){
   fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-    if(d.keys){
-      document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(already set — paste to change)':'sk-…';
-    }
+    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'Paste your OpenClaw key…';
   }).catch(function(){});
-  var url=localStorage.getItem('agnes_url')||'';
-  var model=localStorage.getItem('agnes_model')||'';
-  document.getElementById('cfg-url').value=url;
-  document.getElementById('cfg-model').value=model;
   document.getElementById('modal').classList.add('show');
+  loadConfig('cfg-config');
 }
 function closeSettings(){document.getElementById('modal').classList.remove('show');}
-
 function saveSettings(){
   var url=document.getElementById('cfg-url').value.trim();
   var key=document.getElementById('cfg-key').value.trim();
   var model=document.getElementById('cfg-model').value.trim();
   var saves=[];
-  if(url){localStorage.setItem('agnes_url',url);saves.push(setEnv('AGNES_BASE_URL',url));}
   if(key)saves.push(setEnv('AGNES_API_KEY',key));
-  if(model){localStorage.setItem('agnes_model',model);saves.push(setEnv('AGNES_MODEL',model));}
+  if(url)saves.push(setEnv('AGNES_BASE_URL',url));
+  if(model)saves.push(setEnv('AGNES_MODEL',model));
+  if(!saves.length){closeSettings();return;}
   Promise.all(saves).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
-}
-function setEnv(k,v){
-  return fetch('/api/setenv',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
-    body:JSON.stringify({key:k,value:v})
-  }).then(function(r){return r.json();}).then(function(j){if(!j.ok)throw new Error(j.error);});
 }
 document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeSettings();});
 </script>
@@ -2171,6 +2305,35 @@ function startHttpServer(port = 3456) {
         res.writeHead(400, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error: e.message}));
       }
+    }
+
+    if (url.pathname === "/api/openclaw-config") {
+      if (!checkAuth(req, res, url)) return;
+      const PORT = process.env.PORT || 3456;
+      const tunnel = getTunnelUrl();
+      const __dir = dirname(fileURLToPath(import.meta.url));
+      res.writeHead(200, {"Content-Type":"application/json"});
+      return res.end(JSON.stringify({
+        mcpServers: {
+          thereallywow: {
+            command: "node",
+            args: [join(__dir, "server.mjs")],
+            env: {
+              MCP_MODE: "stdio",
+              ...(API_KEY ? {MCP_API_KEY: API_KEY} : {})
+            }
+          }
+        },
+        http: {
+          base_url: tunnel || `http://localhost:${PORT}`,
+          local_url: `http://localhost:${PORT}`,
+          tools: `GET /tools`,
+          execute: `POST /execute`,
+          chat: `GET /chat`,
+          ...(API_KEY ? {api_key: API_KEY} : {})
+        },
+        system_prompt: "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented."
+      }, null, 2));
     }
 
     if (url.pathname === "/api/chat" && req.method === "POST") {

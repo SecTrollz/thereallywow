@@ -87,12 +87,33 @@ if [ -z "$ADB_DEVICE" ]; then
   [ -z "$ADB_DEVICE" ] && err "Device address required"
 fi
 
-# Write .env
+# ── Preserve existing .env extras, write new core values ──────────────────────
+# Read any existing custom keys (AGNES_API_KEY, MCP_API_KEY, etc.) before overwriting
+EXISTING_EXTRAS=""
+if [ -f "$ENV_FILE" ]; then
+  EXISTING_EXTRAS=$(grep -vE "^(ADB_DEVICE|MCP_MODE|PORT)=" "$ENV_FILE" 2>/dev/null || true)
+fi
+
+# Auto-generate MCP_API_KEY if not already set
+MCP_API_KEY_VAL=$(echo "$EXISTING_EXTRAS" | grep "^MCP_API_KEY=" | cut -d= -f2-)
+if [ -z "$MCP_API_KEY_VAL" ]; then
+  MCP_API_KEY_VAL=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+  ok "Generated server key: $MCP_API_KEY_VAL"
+  EXISTING_EXTRAS=$(echo "$EXISTING_EXTRAS" | grep -v "^MCP_API_KEY=")
+  EXISTING_EXTRAS="${EXISTING_EXTRAS}
+MCP_API_KEY=${MCP_API_KEY_VAL}"
+else
+  ok "Kept existing server key"
+fi
+
 cat > "$ENV_FILE" <<EOF
 ADB_DEVICE=$ADB_DEVICE
 MCP_MODE=http
 PORT=3456
 EOF
+# Append preserved extras (non-empty lines only)
+echo "$EXISTING_EXTRAS" | grep -v "^$" >> "$ENV_FILE" || true
+chmod 600 "$ENV_FILE"
 ok "Config saved to .env"
 
 # ── Test ADB connection ────────────────────────────────────────────────────────
@@ -179,15 +200,26 @@ fi
 info "Starting MCP server..."
 python3 "$SCRIPT_DIR/thereallywow.py" start
 
+PORT_VAL=$(grep "^PORT=" "$ENV_FILE" | cut -d= -f2-)
+PORT_VAL="${PORT_VAL:-3456}"
+MCP_KEY_DISPLAY=$(grep "^MCP_API_KEY=" "$ENV_FILE" | cut -d= -f2- | cut -c1-16)
+
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════╗"
 echo -e "║         thereallywow — ready          ║"
 echo -e "╚══════════════════════════════════════╝${RESET}"
 echo ""
-echo -e "  ${BOLD}Usage:${RESET}"
-echo -e "    python3 thereallywow.py              ${YELLOW}# interactive REPL${RESET}"
-echo -e "    python3 thereallywow.py screenshot   ${YELLOW}# capture screen${RESET}"
-echo -e "    python3 thereallywow.py shell whoami ${YELLOW}# root shell${RESET}"
-echo -e "    python3 thereallywow.py stream       ${YELLOW}# live video URL${RESET}"
-echo -e "    python3 thereallywow.py status       ${YELLOW}# server status${RESET}"
+echo -e "  ${BOLD}Open the control panel:${RESET}"
+echo -e "    ${CYAN}http://localhost:${PORT_VAL}${RESET}"
+echo ""
+echo -e "  ${BOLD}Open Agnes chat:${RESET}"
+echo -e "    ${CYAN}http://localhost:${PORT_VAL}/chat${RESET}"
+echo -e "    ${YELLOW}(Enter your OpenClaw API key in the chat settings to connect Agnes)${RESET}"
+echo ""
+echo -e "  ${BOLD}Your server key${RESET} (copy this into OpenClaw):"
+echo -e "    ${CYAN}${MCP_KEY_DISPLAY}...${RESET}  ${YELLOW}(full key in .env)${RESET}"
+echo ""
+echo -e "  ${BOLD}OpenClaw MCP config:${RESET}"
+echo -e "    ${CYAN}http://localhost:${PORT_VAL}/api/openclaw-config${RESET}"
+echo -e "    ${YELLOW}(Live config JSON — copy into your OpenClaw settings)${RESET}"
 echo ""
