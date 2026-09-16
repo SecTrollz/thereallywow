@@ -915,152 +915,206 @@ const VIEWER_HTML = (port, fps, apiKey) => `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>thereallywow</title>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
   --void:#020002;
   --ember:#c0001e;
   --ember-hot:#ff1a38;
-  --ember-dim:rgba(160,0,24,.5);
   --ash:#ddd0d0;
   --ash-dim:#6b4848;
   --br:rgba(180,0,28,.32);
   --br-hot:rgba(255,30,55,.7);
-  --glass:rgba(7,0,3,.58);
-  --glass2:rgba(12,0,5,.68);
+  --glass:rgba(7,0,3,.72);
+  --glass2:rgba(12,0,5,.78);
   --glow:0 0 10px rgba(200,0,28,.85),0 0 28px rgba(130,0,18,.4);
   --glow-sm:0 0 7px rgba(200,0,28,.75);
   --ok:#39ff14;
   --err:var(--ember-hot);
+  --btn-h:40px;
 }
 body{
   background:var(--void);color:var(--ash);
-  font:11px/1.5 'Courier New',Courier,monospace;
-  height:100vh;display:flex;flex-direction:column;overflow:hidden;position:relative;
+  font:12px/1.5 'Courier New',Courier,monospace;
+  height:100dvh;display:flex;flex-direction:column;overflow:hidden;position:relative;
 }
 body::before{
   content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
     radial-gradient(ellipse 80% 40% at 50% 108%,rgba(150,0,22,.4) 0%,transparent 65%),
     radial-gradient(ellipse 45% 45% at 8% 92%,rgba(100,0,14,.22) 0%,transparent 60%),
-    radial-gradient(ellipse 35% 55% at 92% 88%,rgba(80,0,10,.16) 0%,transparent 58%),
-    radial-gradient(ellipse 60% 20% at 50% 0%,rgba(30,0,5,.3) 0%,transparent 70%);
+    radial-gradient(ellipse 35% 55% at 92% 88%,rgba(80,0,10,.16) 0%,transparent 58%);
   animation:embers 9s ease-in-out infinite alternate;
 }
 @keyframes embers{0%{opacity:.75}100%{opacity:1;filter:brightness(1.25)}}
-body::after{
-  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.028;
-  background-image:linear-gradient(rgba(200,0,28,.6) 1px,transparent 1px),
-    linear-gradient(90deg,rgba(200,0,28,.6) 1px,transparent 1px);
-  background-size:28px 28px;
-}
-header,main,#status{position:relative;z-index:1}
+header,main,#statusbar{position:relative;z-index:1}
 header{
   background:var(--glass);
   backdrop-filter:blur(20px) saturate(1.8);-webkit-backdrop-filter:blur(20px) saturate(1.8);
   border-bottom:1px solid var(--br);
-  padding:8px 14px;display:flex;align-items:center;gap:12px;flex-shrink:0;
-  box-shadow:0 1px 0 rgba(255,20,45,.1),0 4px 28px rgba(0,0,0,.95);
+  padding:0 12px;height:46px;display:flex;align-items:center;gap:10px;flex-shrink:0;
+  box-shadow:0 4px 28px rgba(0,0,0,.95);
 }
 .logo{
   color:var(--ember-hot);font-weight:700;font-size:13px;
-  letter-spacing:3px;text-transform:uppercase;
+  letter-spacing:3px;text-transform:uppercase;white-space:nowrap;
   text-shadow:var(--glow);
   animation:logo-pulse 5s ease-in-out infinite alternate;
 }
 @keyframes logo-pulse{
   0%{text-shadow:0 0 8px rgba(200,0,28,.7),0 0 20px rgba(130,0,18,.3)}
-  100%{text-shadow:0 0 16px rgba(255,30,55,.95),0 0 40px rgba(180,0,28,.55),0 0 70px rgba(110,0,16,.2)}
+  100%{text-shadow:0 0 16px rgba(255,30,55,.95),0 0 40px rgba(180,0,28,.55)}
 }
-#devinfo{color:var(--ash-dim);font-size:10px;flex:1;letter-spacing:.6px}
-select,button,input{
-  background:rgba(14,0,6,.8);color:var(--ash);
-  border:1px solid var(--br);font:inherit;border-radius:2px;
+#devinfo{color:var(--ash-dim);font-size:10px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:.5px}
+.hbtn{
+  background:rgba(14,0,6,.7);color:var(--ash-dim);border:1px solid var(--br);
+  border-radius:2px;font:inherit;font-size:10px;letter-spacing:.5px;
+  padding:0 8px;height:30px;cursor:pointer;white-space:nowrap;flex-shrink:0;
+  transition:all .15s;
+}
+.hbtn:active,.hbtn.on{background:rgba(160,0,24,.45);border-color:var(--ember-hot);color:#fff;box-shadow:var(--glow-sm)}
+#fpswrap{display:flex;align-items:center;gap:4px;flex-shrink:0}
+#fpswrap label{color:var(--ash-dim);font-size:10px;letter-spacing:.4px}
+select{
+  background:rgba(14,0,6,.8);color:var(--ash);border:1px solid var(--br);
+  font:inherit;font-size:11px;border-radius:2px;padding:4px 5px;
   backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  height:30px;
 }
-select,input{padding:4px 8px;letter-spacing:.4px}
-select:focus,input:focus{
-  outline:none;border-color:var(--ember-hot);
-  box-shadow:var(--glow-sm),inset 0 0 10px rgba(180,0,26,.12);
-}
-input::placeholder{color:var(--ash-dim);opacity:.7}
-button{
-  padding:5px 9px;cursor:pointer;
-  transition:all .18s ease;letter-spacing:.6px;font-size:10px;
-}
-button:hover{
-  background:rgba(160,0,24,.4);border-color:var(--ember-hot);
-  color:#fff;box-shadow:var(--glow-sm),0 0 0 1px rgba(255,30,55,.18);
-  text-shadow:0 0 8px rgba(255,55,75,.9);
-}
-button:active{background:rgba(190,0,28,.55);box-shadow:0 0 18px rgba(200,0,28,.9)}
+select:focus{outline:none;border-color:var(--ember-hot)}
+
+/* ── Layout ── */
 main{flex:1;display:flex;overflow:hidden;min-height:0}
+
 #wrap{
   flex:1;display:flex;align-items:center;justify-content:center;
   background:#000;overflow:hidden;position:relative;
   cursor:crosshair;user-select:none;-webkit-user-select:none;touch-action:none;
+  min-width:0;
 }
 #wrap::after{
   content:'';position:absolute;inset:0;pointer-events:none;z-index:2;
-  background:repeating-linear-gradient(
-    to bottom,transparent 0,transparent 3px,rgba(0,0,0,.15) 3px,rgba(0,0,0,.15) 4px);
+  background:repeating-linear-gradient(to bottom,transparent 0,transparent 3px,rgba(0,0,0,.12) 3px,rgba(0,0,0,.12) 4px);
 }
 #wrap::before{
   content:'';position:absolute;inset:0;pointer-events:none;z-index:3;
-  background:radial-gradient(ellipse 90% 90% at 50% 50%,transparent 60%,rgba(0,0,0,.55) 100%);
+  background:radial-gradient(ellipse 90% 90% at 50% 50%,transparent 60%,rgba(0,0,0,.5) 100%);
 }
 #feed{max-width:100%;max-height:100%;object-fit:contain;display:block;pointer-events:none;position:relative;z-index:1}
+#paused-overlay{
+  display:none;position:absolute;inset:0;z-index:10;
+  background:rgba(0,0,0,.65);align-items:center;justify-content:center;
+  font-size:14px;color:var(--ash-dim);letter-spacing:2px;text-transform:uppercase;
+}
+#paused-overlay.show{display:flex}
+
 aside{
-  width:248px;
+  width:232px;flex-shrink:0;
   background:var(--glass2);
   backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
   border-left:1px solid var(--br);
-  display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;
-  box-shadow:-6px 0 35px rgba(0,0,0,.85),-1px 0 0 rgba(180,0,26,.2);
+  display:flex;flex-direction:column;overflow-y:auto;
+  box-shadow:-6px 0 35px rgba(0,0,0,.85);
 }
 aside::-webkit-scrollbar{width:2px}
 aside::-webkit-scrollbar-thumb{background:var(--br);border-radius:1px}
-.sec{padding:9px 10px;border-bottom:1px solid rgba(160,0,22,.16)}
+
+.sec{border-bottom:1px solid rgba(160,0,22,.14)}
 .sec h4{
   font-size:9px;text-transform:uppercase;color:var(--ember);
-  margin-bottom:7px;letter-spacing:2px;
-  text-shadow:0 0 8px rgba(190,0,26,.55);
+  letter-spacing:2px;text-shadow:0 0 8px rgba(190,0,26,.55);
   border-left:2px solid var(--ember);padding-left:7px;
-  box-shadow:-4px 0 0 -2px var(--ember);
+  display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;padding:9px 10px 9px 12px;
+  user-select:none;-webkit-user-select:none;
 }
+.sec h4::after{content:'−';color:var(--ash-dim);font-size:11px;font-weight:400;letter-spacing:0}
+.sec.collapsed h4::after{content:'+'}
+.sec-body{padding:0 10px 9px;overflow:hidden}
+.sec.collapsed .sec-body{display:none}
+
 .row{display:flex;gap:3px;margin-bottom:3px}
 .row:last-child{margin-bottom:0}
-.row button{flex:1;white-space:nowrap}
-.full{width:100%;margin-bottom:3px;display:block}
+.row button{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.full{width:100%;margin-bottom:4px;display:block}
+
+button{
+  background:rgba(14,0,6,.75);color:var(--ash);
+  border:1px solid var(--br);font:inherit;font-size:11px;border-radius:2px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  padding:0 8px;height:var(--btn-h);cursor:pointer;
+  transition:background .14s,border-color .14s,color .14s;
+  letter-spacing:.4px;
+}
+button:hover{background:rgba(160,0,24,.35);border-color:var(--ember-hot);color:#fff;box-shadow:var(--glow-sm)}
+button:active{background:rgba(190,0,28,.55);box-shadow:0 0 18px rgba(200,0,28,.9)}
+input{
+  background:rgba(14,0,6,.8);color:var(--ash);
+  border:1px solid var(--br);font:inherit;font-size:12px;border-radius:2px;
+  backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+  padding:0 8px;height:var(--btn-h);width:100%;letter-spacing:.4px;
+}
+input:focus{outline:none;border-color:var(--ember-hot);box-shadow:var(--glow-sm),inset 0 0 10px rgba(180,0,26,.1)}
+input::placeholder{color:var(--ash-dim);opacity:.65}
+
 #log{
   flex:1;overflow-y:auto;padding:6px 8px;
-  font-size:9px;color:var(--ash-dim);min-height:60px;
+  font-size:9px;color:var(--ash-dim);min-height:50px;
   background:rgba(0,0,0,.35);letter-spacing:.3px;
 }
 #log::-webkit-scrollbar{width:2px}
 #log::-webkit-scrollbar-thumb{background:rgba(160,0,22,.4)}
 .ll{margin-bottom:2px;word-break:break-all;padding:2px 0;border-bottom:1px solid rgba(160,0,22,.07)}
-.ok{color:#b03040}.er{color:var(--ember-hot);text-shadow:0 0 6px rgba(255,0,20,.5)}
-#status{
-  background:rgba(4,0,2,.88);
+.ll.ok{color:#9a2030}.ll.er{color:var(--ember-hot);text-shadow:0 0 5px rgba(255,0,20,.4)}
+
+#statusbar{
+  background:rgba(4,0,2,.9);
   backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-top:1px solid var(--br);
-  padding:4px 13px;font-size:9px;color:var(--ash-dim);letter-spacing:.6px;
+  padding:0 12px;height:28px;font-size:9px;color:var(--ash-dim);letter-spacing:.6px;
   flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  box-shadow:0 -1px 0 rgba(190,0,26,.12);
+  display:flex;align-items:center;gap:6px;
 }
 #dot{
-  width:6px;height:6px;border-radius:50%;
-  background:var(--ember-hot);display:inline-block;
-  margin-right:6px;vertical-align:middle;
+  width:6px;height:6px;border-radius:50%;flex-shrink:0;
+  background:var(--ember-hot);
   box-shadow:0 0 7px var(--ember-hot),0 0 14px rgba(190,0,26,.6);
   animation:dot-pulse 2.5s ease-in-out infinite;
 }
 @keyframes dot-pulse{
-  0%,100%{opacity:1;box-shadow:0 0 7px var(--ember-hot),0 0 14px rgba(190,0,26,.6)}
-  50%{opacity:.4;box-shadow:0 0 3px var(--ember),0 0 7px rgba(130,0,18,.3)}
+  0%,100%{opacity:1}50%{opacity:.3}
+}
+#stmsg{flex:1;overflow:hidden;text-overflow:ellipsis}
+
+/* ── Mobile layout ── */
+@media (max-width:640px){
+  :root{--btn-h:44px}
+  header{height:50px;padding:0 10px}
+  .logo{font-size:11px;letter-spacing:2px}
+  #devinfo{display:none}
+  main{flex-direction:column}
+  #wrap{
+    flex:0 0 auto;
+    height:calc(100vw * 16 / 9);
+    max-height:54dvh;
+    width:100%;
+  }
+  aside{
+    width:100%;flex:1;
+    border-left:none;border-top:1px solid var(--br);
+    display:block;overflow-y:auto;
+    box-shadow:none;
+  }
+  .sec h4{font-size:10px;padding:11px 12px}
+  button{font-size:12px;letter-spacing:.3px}
+  input,select{font-size:14px}
+}
+@media (max-width:360px){
+  .logo{font-size:10px;letter-spacing:1px}
 }
 </style>
 </head>
@@ -1068,126 +1122,192 @@ aside::-webkit-scrollbar-thumb{background:var(--br);border-radius:1px}
 <header>
   <span class="logo">thereallywow</span>
   <span id="devinfo">connecting…</span>
-  <label style="color:var(--ash-dim);letter-spacing:.5px;font-size:10px">fps
-    <select id="fps"><option>1</option><option>2</option><option>3</option><option>5</option><option>10</option></select>
-  </label>
+  <div id="fpswrap">
+    <label>fps</label>
+    <select id="fps"><option>0.5</option><option>1</option><option>2</option><option>3</option><option>5</option><option>10</option></select>
+  </div>
+  <button id="pausebtn" class="hbtn" onclick="togglePause()">&#9646;&#9646; Pause</button>
+  <button class="hbtn" onclick="snap()">&#9673; Snap</button>
 </header>
 <main>
-<div id="wrap"><img id="feed" src="/stream?fps=${fps}${apiKey ? '&token='+encodeURIComponent(apiKey) : ''}" alt="screen"></div>
-<aside>
-  <div class="sec"><h4>Navigate</h4>
-    <div class="row">
-      <button data-k="KEYCODE_BACK">◀ Back</button>
-      <button data-k="KEYCODE_HOME">⌂ Home</button>
-      <button data-k="KEYCODE_APP_SWITCH">⊞ Recent</button>
-    </div>
-    <div class="row">
-      <button data-k="KEYCODE_VOLUME_DOWN">Vol −</button>
-      <button data-k="KEYCODE_VOLUME_UP">Vol +</button>
-      <button data-k="KEYCODE_POWER">Power</button>
-    </div>
-  </div>
-  <div class="sec"><h4>Transmit</h4>
-    <input id="tin" type="text" class="full" placeholder="input to device…">
-    <div class="row">
-      <button onclick="sendType()">▶ Send</button>
-      <button data-k="KEYCODE_ENTER">↵ Enter</button>
-      <button data-k="KEYCODE_DEL">⌫ Del</button>
+<div id="wrap">
+  <img id="feed" src="/stream?fps=${fps}${apiKey ? '&token='+encodeURIComponent(apiKey) : ''}" alt="screen">
+  <div id="paused-overlay">stream paused</div>
+</div>
+<aside id="aside">
+  <div class="sec" id="sec-nav">
+    <h4 onclick="toggleSec('nav')">Navigate</h4>
+    <div class="sec-body">
+      <div class="row">
+        <button data-k="KEYCODE_BACK">&#9664; Back</button>
+        <button data-k="KEYCODE_HOME">&#8962; Home</button>
+        <button data-k="KEYCODE_APP_SWITCH">&#8862; Recent</button>
+      </div>
+      <div class="row">
+        <button data-k="KEYCODE_VOLUME_DOWN">Vol −</button>
+        <button data-k="KEYCODE_VOLUME_UP">Vol +</button>
+        <button data-k="KEYCODE_POWER">Power</button>
+      </div>
     </div>
   </div>
-  <div class="sec"><h4>Shell</h4>
-    <input id="shin" type="text" class="full" placeholder="# command…">
-    <button class="full" onclick="sendShell()">▶ Execute</button>
-  </div>
-  <div class="sec"><h4>Link</h4>
-    <input id="adbin" type="text" class="full" placeholder="IP:PORT">
-    <div class="row">
-      <button onclick="reconnect()">⟳ Reconnect</button>
-      <button onclick="fixPort()"># Fix :5555</button>
-    </div>
-    <div id="adbst" style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.4px">probing…</div>
-  </div>
-  <div class="sec"><h4>Arsenal</h4>
-    <div class="row">
-      <button onclick="snap()">⊙ Snap</button>
-      <button onclick="c('get_ui_tree',{})">UI Tree</button>
-      <button onclick="c('device_info',{})">Device</button>
-    </div>
-    <div class="row">
-      <button onclick="c('set_perf_mode',{mode:'performance'})">Perf ▲</button>
-      <button onclick="c('set_perf_mode',{mode:'balanced'})">Perf ▼</button>
-      <button onclick="c('get_notifications',{})">Notifs</button>
-    </div>
-    <div class="row">
-      <button onclick="c('screen_record_start',{})">● Rec</button>
-      <button onclick="c('screen_record_stop',{})">■ Stop</button>
-      <button onclick="c('reboot',{mode:'normal'})">Reboot</button>
-    </div>
-    <div class="row">
-      <button onclick="c('rotate_screen',{rotation:'90'})">↺ Rot 90</button>
-      <button onclick="c('rotate_screen',{rotation:'auto'})">⟳ Auto</button>
-      <button onclick="c('get_current_app',{})">Current</button>
-    </div>
-    <div class="row">
-      <button onclick="c('list_packages',{})">Packages</button>
-      <button onclick="c('start_network_capture',{})">▶ Net Cap</button>
-      <button onclick="c('stop_network_capture',{})">■ Net Cap</button>
+  <div class="sec" id="sec-tx">
+    <h4 onclick="toggleSec('tx')">Transmit</h4>
+    <div class="sec-body">
+      <input id="tin" type="text" class="full" placeholder="text to device…" autocorrect="off" autocapitalize="off">
+      <div class="row">
+        <button onclick="sendType()">&#9654; Send</button>
+        <button data-k="KEYCODE_ENTER">&#8629; Enter</button>
+        <button data-k="KEYCODE_DEL">&#9003; Del</button>
+      </div>
     </div>
   </div>
-  <div class="sec"><h4>Invoke</h4>
-    <input id="pkgin" type="text" class="full" placeholder="com.package.name">
-    <div class="row">
-      <button class="full" onclick="sendLaunch()">▶ Launch</button>
-      <button onclick="sendForceStop()">■ Stop</button>
+  <div class="sec" id="sec-sh">
+    <h4 onclick="toggleSec('sh')">Shell</h4>
+    <div class="sec-body">
+      <input id="shin" type="text" class="full" placeholder="# root command…" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="full" onclick="sendShell()">&#9654; Execute</button>
     </div>
   </div>
-  <div class="sec" style="border-bottom:none"><h4>Dispatch</h4></div>
-  <div id="log"></div>
+  <div class="sec collapsed" id="sec-lnk">
+    <h4 onclick="toggleSec('lnk')">Link</h4>
+    <div class="sec-body">
+      <input id="adbin" type="text" class="full" placeholder="IP:PORT" autocorrect="off">
+      <div class="row">
+        <button onclick="reconnect()">&#10227; Reconnect</button>
+        <button onclick="fixPort()"># Fix :5555</button>
+      </div>
+      <div id="adbst" style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.4px">probing…</div>
+    </div>
+  </div>
+  <div class="sec collapsed" id="sec-ars">
+    <h4 onclick="toggleSec('ars')">Arsenal</h4>
+    <div class="sec-body">
+      <div class="row">
+        <button onclick="c('device_info',{})">Device</button>
+        <button onclick="c('get_ui_tree',{})">UI Tree</button>
+        <button onclick="c('get_notifications',{})">Notifs</button>
+      </div>
+      <div class="row">
+        <button onclick="c('set_perf_mode',{mode:'performance'})">Perf &#9650;</button>
+        <button onclick="c('set_perf_mode',{mode:'balanced'})">Perf &#9660;</button>
+        <button onclick="c('get_current_app',{})">App?</button>
+      </div>
+      <div class="row">
+        <button onclick="c('screen_record_start',{})">&#9679; Rec</button>
+        <button onclick="c('screen_record_stop',{})">&#9632; Stop</button>
+        <button onclick="c('reboot',{mode:'normal'})">Reboot</button>
+      </div>
+      <div class="row">
+        <button onclick="c('rotate_screen',{rotation:'90'})">&#8634; 90</button>
+        <button onclick="c('rotate_screen',{rotation:'auto'})">&#8635; Auto</button>
+        <button onclick="c('list_packages',{})">Packages</button>
+      </div>
+      <div class="row">
+        <button onclick="c('start_network_capture',{})">&#9654; Net</button>
+        <button onclick="c('stop_network_capture',{})">&#9632; Net</button>
+      </div>
+    </div>
+  </div>
+  <div class="sec collapsed" id="sec-inv">
+    <h4 onclick="toggleSec('inv')">Invoke</h4>
+    <div class="sec-body">
+      <input id="pkgin" type="text" class="full" placeholder="com.package.name" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <div class="row">
+        <button onclick="sendLaunch()">&#9654; Launch</button>
+        <button onclick="sendForceStop()">&#9632; Stop</button>
+      </div>
+    </div>
+  </div>
+  <div class="sec" id="sec-log" style="border-bottom:none;flex:1;display:flex;flex-direction:column;min-height:120px">
+    <h4 onclick="toggleSec('log')">Dispatch</h4>
+    <div class="sec-body" style="padding:0;flex:1;display:flex;flex-direction:column">
+      <div id="log"></div>
+    </div>
+  </div>
 </aside>
 </main>
-<div id="status"><span id="dot"></span>ready · click=tap · drag=swipe · hold 600ms=long-press</div>
+<div id="statusbar"><span id="dot"></span><span id="stmsg">tap=touch · drag=swipe · hold 600ms=long-press</span></div>
 <script>
 var devW=720,devH=1600;
+var _streamPaused=false;
+var _streamSrc='';
 var _auth=${apiKey ? JSON.stringify('Bearer '+apiKey) : 'null'};
-function _hdr(extra){var h=extra||{};if(_auth)h['Authorization']=_auth;return h;}
-function _get(path){return fetch(path,{headers:_hdr()});}
+function _hdr(e){var h=e||{};if(_auth)h['Authorization']=_auth;return h;}
+function _get(p){return fetch(p,{headers:_hdr()});}
 
 _get('/api/info').then(function(r){return r.json();}).then(function(d){
   devW=d.device_w||720;devH=d.device_h||1600;
   var txt=d.device+' \u00b7 '+devW+'x'+devH;
-  if(d.tunnel_url)txt+=' \u00b7 @ '+d.tunnel_url;
+  if(d.tunnel_url)txt+=' \u00b7 '+d.tunnel_url;
   else if(d.mesh_ip)txt+=' \u00b7 mesh:'+d.mesh_ip;
   document.getElementById('devinfo').textContent=txt;
-}).catch(function(){document.getElementById('devinfo').textContent='no device info';});
+}).catch(function(){document.getElementById('devinfo').textContent='offline';});
+
+function setStatus(msg){document.getElementById('stmsg').textContent=msg;}
 
 function c(tool,params){
-  document.getElementById('status').textContent='\u2192 '+tool+'\u2026';
+  setStatus('\u2192 '+tool+'\u2026');
   return fetch('/execute',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
     body:JSON.stringify({tool_name:tool,parameters:params||{}})
   }).then(function(r){return r.json();}).then(function(j){
-    var msg=String(j.result||j.error||'ok').slice(0,200);
+    var msg=String(j.result||j.error||'ok').slice(0,300);
     addLog(tool+': '+msg,!!j.error);
-    document.getElementById('status').textContent=msg;
+    setStatus(msg.slice(0,120));
     return j.result;
   }).catch(function(e){addLog('Error: '+e.message,true);});
 }
 
-function addLog(msg,err){
+function addLog(msg,isErr){
   var el=document.getElementById('log');
   var d=document.createElement('div');
-  d.className='ll '+(err?'er':'ok');
+  d.className='ll '+(isErr?'er':'ok');
   d.textContent=new Date().toTimeString().slice(0,8)+' '+msg;
   el.insertBefore(d,el.firstChild);
-  while(el.children.length>80)el.removeChild(el.lastChild);
+  while(el.children.length>100)el.removeChild(el.lastChild);
 }
 
+/* stream controls */
+var feed=document.getElementById('feed');
+var tok=${apiKey ? "'&token='+encodeURIComponent("+JSON.stringify(apiKey)+")" : "''"};
 var fpsSel=document.getElementById('fps');
 fpsSel.value='${fps}';
+function streamUrl(){return '/stream?fps='+fpsSel.value+tok;}
+_streamSrc=streamUrl();
+feed.src=_streamSrc;
+
 fpsSel.addEventListener('change',function(){
-  var tok=_auth?'&token='+encodeURIComponent(_auth.slice(7)):'';
-  document.getElementById('feed').src='/stream?fps='+this.value+tok;
+  if(!_streamPaused){_streamSrc=streamUrl();feed.src=_streamSrc;}
+  else{_streamSrc=streamUrl();}
 });
 
+function togglePause(){
+  _streamPaused=!_streamPaused;
+  var btn=document.getElementById('pausebtn');
+  var ov=document.getElementById('paused-overlay');
+  if(_streamPaused){
+    feed.src='';
+    btn.textContent='\u25b6 Resume';btn.classList.add('on');
+    ov.classList.add('show');
+  } else {
+    feed.src=_streamSrc=streamUrl();
+    btn.textContent='\u23f8 Pause';btn.classList.remove('on');
+    ov.classList.remove('show');
+  }
+}
+
+/* auto-pause when tab hidden */
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden&&!_streamPaused)togglePause();
+  else if(!document.hidden&&_streamPaused)togglePause();
+});
+
+/* collapsible sections */
+function toggleSec(id){
+  var el=document.getElementById('sec-'+id);
+  if(el)el.classList.toggle('collapsed');
+}
+
+/* key buttons */
 document.querySelectorAll('[data-k]').forEach(function(b){
   b.addEventListener('click',function(){c('keyevent',{key:b.dataset.k});});
 });
@@ -1217,42 +1337,36 @@ document.getElementById('pkgin').addEventListener('keydown',function(e){if(e.key
 function reconnect(){
   var dev=document.getElementById('adbin').value.trim()||undefined;
   var st=document.getElementById('adbst');
-  st.textContent='connecting…';
+  st.textContent='connecting\u2026';
   fetch('/reconnect',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
     body:JSON.stringify(dev?{device:dev}:{})
   }).then(function(r){return r.json();}).then(function(j){
-    st.textContent=(j.ok?'✓ connected: ':'✗ failed: ')+j.device;
+    st.textContent=(j.ok?'connected: ':'failed: ')+j.device;
     st.style.color=j.ok?'var(--ok)':'var(--err)';
-    if(j.ok&&dev){document.getElementById('devinfo').textContent=j.device;}
-    addLog('reconnect: '+(j.ok?'ok':'failed')+' '+j.device,!j.ok);
+    addLog('reconnect: '+(j.ok?'ok':'fail')+' '+j.device,!j.ok);
   }).catch(function(e){st.textContent='error: '+e.message;st.style.color='var(--err)';});
 }
 
 function fixPort(){
-  if(!confirm('Run root command to lock ADB to port 5555 permanently?'))return;
+  if(!confirm('Lock ADB to port 5555 via root?'))return;
   c('root_shell',{command:'setprop service.adb.tcp.port 5555; stop adbd; start adbd; sleep 1; mkdir -p /data/adb/service.d; printf "#!/system/bin/sh\\nsetprop service.adb.tcp.port 5555\\nstop adbd\\nstart adbd\\n" > /data/adb/service.d/99-adb-tcp.sh; chmod 755 /data/adb/service.d/99-adb-tcp.sh; getprop service.adb.tcp.port'}).then(function(res){
-    addLog('fixPort result: '+res,false);
     setTimeout(function(){
       var ip=document.getElementById('adbin').value.trim().split(':')[0];
-      var newDev=ip+':5555';
-      if(newDev.startsWith(':'))return;
-      document.getElementById('adbin').value=newDev;
-      addLog('Now run: reconnect with '+newDev,false);
+      var nd=ip+':5555';
+      if(!nd.startsWith(':'))document.getElementById('adbin').value=nd;
     },2000);
   });
 }
 
-// Poll ADB status every 15s
 function pollAdb(){
   _get('/api/info').then(function(r){return r.json();}).then(function(d){
     var st=document.getElementById('adbst');
-    st.textContent=(d.adb_alive?'✓ connected: ':'✗ disconnected: ')+d.device;
+    st.textContent=(d.adb_alive?'connected: ':'disconnected: ')+d.device;
     st.style.color=d.adb_alive?'var(--ok)':'var(--err)';
     document.getElementById('dot').style.background=d.adb_alive?'var(--ok)':'var(--err)';
   }).catch(function(){});
 }
-pollAdb();
-setInterval(pollAdb,15000);
+pollAdb();setInterval(pollAdb,15000);
 
 function snap(){
   c('screenshot',{}).then(function(b64){
@@ -1264,12 +1378,12 @@ function snap(){
   });
 }
 
+/* touch/mouse input on feed */
 var wrap=document.getElementById('wrap');
-var feed=document.getElementById('feed');
 var ds=null;
 function imgXY(ex,ey){
   var r=feed.getBoundingClientRect();
-  if(r.width===0||r.height===0)return{x:0,y:0};
+  if(!r.width||!r.height)return{x:0,y:0};
   return{
     x:Math.max(0,Math.min(devW,Math.round((ex-r.left)/r.width*devW))),
     y:Math.max(0,Math.min(devH,Math.round((ey-r.top)/r.height*devH)))
@@ -1278,21 +1392,21 @@ function imgXY(ex,ey){
 function pstart(ex,ey){ds={t:Date.now(),p:imgXY(ex,ey)};}
 function pend(ex,ey){
   if(!ds)return;
-  var e=imgXY(ex,ey),dt=Date.now()-ds.t;
-  var dx=Math.abs(e.x-ds.p.x),dy=Math.abs(e.y-ds.p.y);
+  var e2=imgXY(ex,ey),dt=Date.now()-ds.t;
+  var dx=Math.abs(e2.x-ds.p.x),dy=Math.abs(e2.y-ds.p.y);
   if(dx<20&&dy<20){
     if(dt>600)c('long_press',{x:ds.p.x,y:ds.p.y,duration_ms:dt});
     else c('tap_coords',{x:ds.p.x,y:ds.p.y});
   }else{
-    c('swipe',{x1:ds.p.x,y1:ds.p.y,x2:e.x,y2:e.y,duration_ms:Math.min(Math.max(dt,50),1200)});
+    c('swipe',{x1:ds.p.x,y1:ds.p.y,x2:e2.x,y2:e2.y,duration_ms:Math.min(Math.max(dt,50),1200)});
   }
   ds=null;
 }
 wrap.addEventListener('mousedown',function(e){e.preventDefault();pstart(e.clientX,e.clientY);});
 wrap.addEventListener('mouseup',function(e){pend(e.clientX,e.clientY);});
 wrap.addEventListener('mouseleave',function(){ds=null;});
-wrap.addEventListener('touchstart',function(e){e.preventDefault();var t=e.touches[0];pstart(t.clientX,t.clientY);},{passive:false});
-wrap.addEventListener('touchend',function(e){var t=e.changedTouches[0];pend(t.clientX,t.clientY);},{passive:false});
+wrap.addEventListener('touchstart',function(e){e.preventDefault();pstart(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+wrap.addEventListener('touchend',function(e){pend(e.changedTouches[0].clientX,e.changedTouches[0].clientY);},{passive:false});
 wrap.addEventListener('touchcancel',function(){ds=null;},{passive:false});
 </script>
 </body>
