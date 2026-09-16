@@ -24,7 +24,6 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ENV_FILE   = SCRIPT_DIR / ".env"
 PID_FILE   = SCRIPT_DIR / "server.pid"
 LOG_FILE   = SCRIPT_DIR / "server.log"
-SERVER_URL = f"http://localhost:{int(ENV.get('PORT', 3456))}"
 NODE_SCRIPT = SCRIPT_DIR / "server.mjs"
 
 def load_env():
@@ -49,10 +48,11 @@ def set_env_var(key, value):
         new_lines.append(f"{key}={value}")
     ENV_FILE.write_text("\n".join(new_lines) + "\n")
 
-ENV     = load_env()
-DEVICE  = ENV.get("ADB_DEVICE", os.environ.get("ADB_DEVICE", ""))
-PORT    = int(ENV.get("PORT", 3456))
-API_KEY = ENV.get("MCP_API_KEY", os.environ.get("MCP_API_KEY", ""))
+ENV        = load_env()
+DEVICE     = ENV.get("ADB_DEVICE", os.environ.get("ADB_DEVICE", ""))
+PORT       = int(ENV.get("PORT", 3456))
+API_KEY    = ENV.get("MCP_API_KEY", os.environ.get("MCP_API_KEY", ""))
+SERVER_URL = f"http://localhost:{PORT}"
 
 # ── Colours ────────────────────────────────────────────────────────────────────
 def c(code): return f"\033[{code}m" if sys.stdout.isatty() else ""
