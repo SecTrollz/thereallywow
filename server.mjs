@@ -941,6 +941,317 @@ function rescheduleStream() {
   }, ms);
 }
 
+const CHAT_HTML = (apiKey) => `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Agnes — thereallywow</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#0e0e14;--surface:rgba(255,255,255,.05);--surface-2:rgba(255,255,255,.09);
+  --border:rgba(255,255,255,.1);--border-focus:rgba(99,179,237,.6);
+  --accent:#63b3ed;--accent-dim:rgba(99,179,237,.15);
+  --text:#e2e8f0;--text-dim:#718096;--text-muted:#4a5568;
+  --ok:#68d391;--err:#fc8181;--user-bg:rgba(99,179,237,.18);--agent-bg:rgba(255,255,255,.05);
+  --r:12px;--r-sm:8px;
+}
+body{background:var(--bg);color:var(--text);font:14px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  height:100dvh;display:flex;flex-direction:column;overflow:hidden}
+header{
+  background:rgba(14,14,22,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);padding:0 16px;height:52px;
+  display:flex;align-items:center;gap:12px;flex-shrink:0;
+}
+.back{background:var(--surface);color:var(--text-dim);border:1px solid var(--border);
+  border-radius:var(--r-sm);font:inherit;font-size:12px;padding:0 12px;height:32px;
+  cursor:pointer;text-decoration:none;display:flex;align-items:center;gap:5px;transition:background .12s,color .12s}
+.back:hover{background:var(--surface-2);color:var(--text)}
+.title{font-weight:700;font-size:16px;letter-spacing:-.3px;
+  background:linear-gradient(135deg,#e2e8f0,var(--accent));
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.subtitle{color:var(--text-muted);font-size:11px}
+#settingsbtn{margin-left:auto;background:var(--surface);color:var(--text-dim);border:1px solid var(--border);
+  border-radius:var(--r-sm);font:inherit;font-size:12px;padding:0 12px;height:32px;cursor:pointer;transition:background .12s,color .12s}
+#settingsbtn:hover{background:var(--surface-2);color:var(--text)}
+
+#messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+#messages::-webkit-scrollbar{width:3px}
+#messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:2px}
+
+.msg{display:flex;flex-direction:column;gap:4px;max-width:82%}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.agent{align-self:flex-start;align-items:flex-start}
+.bubble{padding:10px 14px;border-radius:var(--r);line-height:1.55;font-size:13px;word-break:break-word;white-space:pre-wrap}
+.msg.user .bubble{background:var(--user-bg);border:1px solid rgba(99,179,237,.3);border-bottom-right-radius:3px;color:var(--text)}
+.msg.agent .bubble{background:var(--agent-bg);border:1px solid var(--border);border-bottom-left-radius:3px;color:var(--text)}
+.msg.agent.err .bubble{background:rgba(252,129,129,.08);border-color:rgba(252,129,129,.3);color:var(--err)}
+.who{font-size:10px;color:var(--text-muted);padding:0 4px;letter-spacing:.3px;font-weight:600;text-transform:uppercase}
+
+.actions{display:flex;flex-direction:column;gap:3px;margin-top:2px;max-width:340px}
+.action{background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden}
+.action-hd{padding:7px 10px;font-size:11px;color:var(--accent);cursor:pointer;
+  display:flex;align-items:center;gap:6px;user-select:none;font-family:'SF Mono','Cascadia Code',monospace}
+.action-hd::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--ok);flex-shrink:0}
+.action-body{display:none;padding:0 10px 8px;font-size:10px;font-family:'SF Mono','Cascadia Code',monospace;color:var(--text-dim);white-space:pre-wrap;word-break:break-all}
+.action.open .action-body{display:block}
+.action-hd .chevron{margin-left:auto;color:var(--text-muted);transition:transform .15s;font-size:10px}
+.action.open .action-hd .chevron{transform:rotate(180deg)}
+
+.typing{display:flex;align-items:center;gap:5px;padding:10px 14px;
+  background:var(--agent-bg);border:1px solid var(--border);border-radius:var(--r);border-bottom-left-radius:3px}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--text-muted);animation:bounce .9s infinite}
+.typing span:nth-child(2){animation-delay:.15s}
+.typing span:nth-child(3){animation-delay:.3s}
+@keyframes bounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+
+#empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--text-muted);text-align:center;padding:24px}
+#empty .icon{font-size:36px;opacity:.4}
+#empty h3{font-size:15px;font-weight:600;color:var(--text-dim)}
+#empty p{font-size:12px;max-width:260px;line-height:1.5}
+.suggestion{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-sm);
+  padding:8px 14px;font-size:12px;color:var(--text-dim);cursor:pointer;transition:background .12s,color .12s;
+  text-align:left;margin-top:2px}
+.suggestion:hover{background:var(--surface-2);color:var(--text)}
+
+#compose{
+  background:rgba(14,14,22,.95);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-top:1px solid var(--border);padding:12px 14px;
+  display:flex;gap:8px;align-items:flex-end;flex-shrink:0;
+}
+#input{
+  flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--r);font:inherit;font-size:14px;padding:10px 14px;
+  resize:none;max-height:120px;line-height:1.5;min-height:44px;
+  transition:border-color .12s;
+}
+#input:focus{outline:none;border-color:var(--border-focus);background:var(--surface-2)}
+#input::placeholder{color:var(--text-muted)}
+#send{
+  background:var(--accent);color:#0e0e14;border:none;border-radius:var(--r-sm);
+  font:inherit;font-weight:600;font-size:13px;padding:0 18px;height:44px;
+  cursor:pointer;flex-shrink:0;transition:opacity .12s;
+}
+#send:hover{opacity:.9}
+#send:disabled{opacity:.35;cursor:not-allowed}
+
+/* Settings modal */
+#modal{display:none;position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.7);
+  align-items:center;justify-content:center;padding:20px}
+#modal.show{display:flex}
+.modal-box{background:#15151f;border:1px solid var(--border);border-radius:var(--r);
+  padding:20px;width:100%;max-width:400px;display:flex;flex-direction:column;gap:14px}
+.modal-box h3{font-size:15px;font-weight:600}
+.modal-box label{font-size:11px;color:var(--text-dim);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px}
+.modal-box input{background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--r-sm);font:inherit;font-size:13px;padding:0 10px;height:40px;width:100%}
+.modal-box input:focus{outline:none;border-color:var(--border-focus)}
+.modal-row{display:flex;gap:8px}
+.modal-row button{flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);
+  border-radius:var(--r-sm);font:inherit;font-size:13px;height:40px;cursor:pointer;transition:background .12s}
+.modal-row button:hover{background:var(--surface-2)}
+.modal-row button.primary{background:var(--accent);color:#0e0e14;border-color:var(--accent);font-weight:600}
+.modal-row button.primary:hover{opacity:.9}
+.modal-note{font-size:11px;color:var(--text-muted)}
+
+@media(max-width:480px){
+  .msg{max-width:94%}
+  #compose{padding:10px}
+}
+</style>
+</head>
+<body>
+<header>
+  <a class="back" href="/">&#8592; Control</a>
+  <div>
+    <div class="title">Agnes</div>
+    <div class="subtitle">AI device control</div>
+  </div>
+  <button id="settingsbtn" onclick="openSettings()">&#9881; Settings</button>
+</header>
+<div id="messages">
+  <div id="empty">
+    <div class="icon">&#129302;</div>
+    <h3>Agnes is ready</h3>
+    <p>Tell Agnes what to do with the device. It can see the screen, tap, type, run commands, and more.</p>
+    <button class="suggestion" onclick="suggest(this)">Take a screenshot and describe what you see</button>
+    <button class="suggestion" onclick="suggest(this)">What app is currently open?</button>
+    <button class="suggestion" onclick="suggest(this)">Go to the home screen</button>
+    <button class="suggestion" onclick="suggest(this)">What is the battery level?</button>
+  </div>
+</div>
+<div id="compose">
+  <textarea id="input" placeholder="Tell Agnes what to do…" rows="1"></textarea>
+  <button id="send" onclick="send()">Send</button>
+</div>
+<div id="modal">
+  <div class="modal-box">
+    <h3>Agnes Settings</h3>
+    <div>
+      <label>OpenClaw / Agnes API base URL</label>
+      <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1">
+    </div>
+    <div>
+      <label>API Key (Agnes / OpenClaw)</label>
+      <input id="cfg-key" type="password" placeholder="sk-…" autocomplete="new-password">
+    </div>
+    <div>
+      <label>Model</label>
+      <input id="cfg-model" type="text" placeholder="gpt-4o">
+    </div>
+    <p class="modal-note">Settings are saved to .env on the server and persist across restarts.</p>
+    <div class="modal-row">
+      <button onclick="closeSettings()">Cancel</button>
+      <button class="primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+<script>
+var _auth=${apiKey ? JSON.stringify('Bearer '+apiKey) : 'null'};
+function _hdr(e){var h=e||{};if(_auth)h['Authorization']=_auth;return h;}
+var history=[];
+var busy=false;
+
+function scrollBottom(){var m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
+
+function suggest(btn){
+  document.getElementById('input').value=btn.textContent;
+  send();
+}
+
+function addMsg(role,text,actions,isErr){
+  var empty=document.getElementById('empty');
+  if(empty)empty.remove();
+  var wrap=document.getElementById('messages');
+  var div=document.createElement('div');
+  div.className='msg '+role+(isErr?' err':'');
+  var who=document.createElement('div');
+  who.className='who';
+  who.textContent=role==='user'?'You':'Agnes';
+  div.appendChild(who);
+  if(text){
+    var b=document.createElement('div');
+    b.className='bubble';
+    b.textContent=text;
+    div.appendChild(b);
+  }
+  if(actions&&actions.length){
+    var ac=document.createElement('div');
+    ac.className='actions';
+    actions.forEach(function(a){
+      var el=document.createElement('div');
+      el.className='action';
+      var hd=document.createElement('div');
+      hd.className='action-hd';
+      hd.innerHTML=a.tool+'<span class="chevron">&#9660;</span>';
+      hd.onclick=function(){el.classList.toggle('open');};
+      var bd=document.createElement('div');
+      bd.className='action-body';
+      bd.textContent=(a.args&&a.args!=='{}'?'Args: '+a.args+'\n':'')+'\u2192 '+a.result.slice(0,400);
+      el.appendChild(hd);el.appendChild(bd);
+      ac.appendChild(el);
+    });
+    div.appendChild(ac);
+  }
+  wrap.appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function showTyping(){
+  var empty=document.getElementById('empty');
+  if(empty)empty.remove();
+  var wrap=document.getElementById('messages');
+  var div=document.createElement('div');
+  div.className='msg agent';
+  div.id='typing-indicator';
+  var who=document.createElement('div');who.className='who';who.textContent='Agnes';
+  var t=document.createElement('div');t.className='typing';
+  t.innerHTML='<span></span><span></span><span></span>';
+  div.appendChild(who);div.appendChild(t);
+  wrap.appendChild(div);scrollBottom();
+}
+function hideTyping(){var t=document.getElementById('typing-indicator');if(t)t.remove();}
+
+function autoResize(){
+  var el=document.getElementById('input');
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,120)+'px';
+}
+
+function send(){
+  if(busy)return;
+  var inp=document.getElementById('input');
+  var text=inp.value.trim();
+  if(!text)return;
+  inp.value='';inp.style.height='';
+  busy=true;
+  document.getElementById('send').disabled=true;
+  history.push({role:'user',content:text});
+  addMsg('user',text);
+  showTyping();
+  fetch('/api/chat',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({history:history})
+  }).then(function(r){return r.json();}).then(function(j){
+    hideTyping();
+    if(j.error){
+      addMsg('agent',j.error,j.actions||[],true);
+    } else {
+      history.push({role:'assistant',content:j.reply});
+      addMsg('agent',j.reply,j.actions||[]);
+    }
+  }).catch(function(e){
+    hideTyping();
+    addMsg('agent','Network error: '+e.message,[],true);
+  }).finally(function(){
+    busy=false;
+    document.getElementById('send').disabled=false;
+    document.getElementById('input').focus();
+  });
+}
+
+document.getElementById('input').addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
+});
+document.getElementById('input').addEventListener('input',autoResize);
+
+/* Settings */
+function openSettings(){
+  fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
+    if(d.keys){
+      document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(already set — paste to change)':'sk-…';
+    }
+  }).catch(function(){});
+  var url=localStorage.getItem('agnes_url')||'';
+  var model=localStorage.getItem('agnes_model')||'';
+  document.getElementById('cfg-url').value=url;
+  document.getElementById('cfg-model').value=model;
+  document.getElementById('modal').classList.add('show');
+}
+function closeSettings(){document.getElementById('modal').classList.remove('show');}
+
+function saveSettings(){
+  var url=document.getElementById('cfg-url').value.trim();
+  var key=document.getElementById('cfg-key').value.trim();
+  var model=document.getElementById('cfg-model').value.trim();
+  var saves=[];
+  if(url){localStorage.setItem('agnes_url',url);saves.push(setEnv('AGNES_BASE_URL',url));}
+  if(key)saves.push(setEnv('AGNES_API_KEY',key));
+  if(model){localStorage.setItem('agnes_model',model);saves.push(setEnv('AGNES_MODEL',model));}
+  Promise.all(saves).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
+}
+function setEnv(k,v){
+  return fetch('/api/setenv',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({key:k,value:v})
+  }).then(function(r){return r.json();}).then(function(j){if(!j.ok)throw new Error(j.error);});
+}
+document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeSettings();});
+</script>
+</body>
+</html>`;
+
 const VIEWER_HTML = (port, fps, apiKey) => `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1121,6 +1432,7 @@ input::placeholder{color:var(--text-muted)}
     <label>fps</label>
     <select id="fps"><option>0.5</option><option>1</option><option>2</option><option>3</option><option>5</option><option>10</option></select>
   </div>
+  <a href="/chat" class="hbtn" style="text-decoration:none;display:flex;align-items:center">&#129302; Agnes</a>
   <button id="pausebtn" class="hbtn" onclick="togglePause()">&#9646;&#9646; Pause</button>
   <button class="hbtn" onclick="snap()">&#9673; Snap</button>
 </header>
@@ -1190,7 +1502,10 @@ input::placeholder{color:var(--text-muted)}
         <button onclick="saveKey('MCP_API_KEY','server-key-in','server-key-status')">Save</button>
         <button onclick="clearKey('MCP_API_KEY','server-key-status')">Clear</button>
       </div>
-      <div style="font-size:9px;color:var(--ash-dim);margin-top:5px;letter-spacing:.3px">Server key change requires restart</div>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:5px;letter-spacing:.3px">Server key change requires restart</div>
+      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">OpenClaw Base URL</label>
+      <input id="url-in" type="url" class="full" placeholder="https://api.openai.com/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button onclick="saveKey('AGNES_BASE_URL','url-in','')" class="full">Save URL</button>
     </div>
   </div>
   <div class="sec collapsed" id="sec-ars">
@@ -1792,7 +2107,7 @@ function startHttpServer(port = 3456) {
 
     if (url.pathname === "/api/setenv" && req.method === "POST") {
       if (!checkAuth(req, res, url)) return;
-      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY"];
+      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL"];
       let key, value;
       try { ({key, value} = JSON.parse(body)); } catch {
         res.writeHead(400, {"Content-Type":"application/json"});
@@ -1856,6 +2171,65 @@ function startHttpServer(port = 3456) {
         res.writeHead(400, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error: e.message}));
       }
+    }
+
+    if (url.pathname === "/api/chat" && req.method === "POST") {
+      if (!checkAuth(req, res, url)) return;
+      let history;
+      try { ({history} = JSON.parse(body)); } catch {
+        res.writeHead(400, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:"Expected {history:[...]}"}));
+      }
+      const agnesKey = readEnvKey("AGNES_API_KEY");
+      if (!agnesKey) {
+        res.writeHead(400, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:"AGNES_API_KEY not set — add it in Settings"}));
+      }
+      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "https://api.openai.com/v1").replace(/\/+$/,"");
+      const model   = readEnvKey("AGNES_MODEL") || "gpt-4o";
+      const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
+      const messages = [{role:"system",content:sysprompt}, ...history];
+      const tools = buildOpenAIToolList();
+      const actions = [];
+      try {
+        for (let round = 0; round < 12; round++) {
+          const r = await fetch(`${baseUrl}/chat/completions`, {
+            method:"POST",
+            headers:{"Content-Type":"application/json","Authorization":`Bearer ${agnesKey}`},
+            body: JSON.stringify({model, messages, tools, tool_choice:"auto", max_tokens:4096})
+          });
+          if (!r.ok) {
+            const txt = await r.text();
+            throw new Error(`Agnes API ${r.status}: ${txt.slice(0,300)}`);
+          }
+          const data = await r.json();
+          const msg = data.choices?.[0]?.message;
+          if (!msg) throw new Error("Empty response from Agnes");
+          messages.push(msg);
+          if (!msg.tool_calls?.length) {
+            res.writeHead(200, {"Content-Type":"application/json"});
+            return res.end(JSON.stringify({reply: msg.content || "", actions}));
+          }
+          for (const call of msg.tool_calls) {
+            let result;
+            try {
+              result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}")));
+            } catch(e) { result = "Error: "+e.message; }
+            actions.push({tool:call.function.name, args:call.function.arguments, result});
+            messages.push({role:"tool", tool_call_id:call.id, content:result});
+          }
+        }
+        throw new Error("Too many tool rounds — Agnes may be looping");
+      } catch(e) {
+        res.writeHead(500, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:e.message, actions}));
+      }
+    }
+
+    if (url.pathname === "/chat") {
+      if (!checkAuth(req, res, url)) return;
+      res.writeHead(200, {"Content-Type":"text/html"});
+      return res.end(CHAT_HTML(API_KEY));
     }
 
     res.writeHead(404, {"Content-Type":"application/json"});
