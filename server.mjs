@@ -854,6 +854,28 @@ server.tool("reboot", "Reboot the device.",
   }
 );
 
+server.tool("get_location",
+  "Get current GPS coordinates from device location services.",
+  {},
+  async () => {
+    const out = adb("dumpsys location 2>/dev/null | grep -F 'Location['");
+    // Try fused (most accurate) then gps then network
+    for (const provider of ["fused", "gps", "network", "passive"]) {
+      const re = new RegExp(`Location\\[${provider}\\s+([\\-\\d.]+),([\\-\\d.]+)(?:\\s+hAcc=([\\d.]+))?`);
+      const m = out.match(re);
+      if (m) {
+        const [, lat, lon, acc] = m;
+        const accStr = acc ? ` \u00b1${Math.round(parseFloat(acc))}m` : "";
+        return { content: [{ type:"text", text:`${parseFloat(lat).toFixed(6)}, ${parseFloat(lon).toFixed(6)}${accStr} (${provider})` }] };
+      }
+    }
+    // Fallback: any Location[ line
+    const m2 = out.match(/Location\[\w+ ([\-\d.]+),([\-\d.]+)/);
+    if (m2) return { content: [{ type:"text", text:`${parseFloat(m2[1]).toFixed(6)}, ${parseFloat(m2[2]).toFixed(6)}` }] };
+    return { content: [{ type:"text", text:"unavailable — ensure location is enabled" }] };
+  }
+);
+
 server.tool("screen_record_start", "Start screen recording in background.",
   { output: z.string().default("/sdcard/screenrecord.mp4"), time_limit: z.number().default(180) },
   async ({ output, time_limit }) => {
@@ -1130,6 +1152,7 @@ input::placeholder{color:var(--ash-dim);opacity:.65}
 <header>
   <span class="logo">thereallywow</span>
   <span id="devinfo">connecting…</span>
+  <span id="gpsinfo" style="color:var(--ash-dim);font-size:10px;letter-spacing:.4px;white-space:nowrap;flex-shrink:0;display:none"></span>
   <div id="fpswrap">
     <label>fps</label>
     <select id="fps"><option>0.5</option><option>1</option><option>2</option><option>3</option><option>5</option><option>10</option></select>
@@ -1213,6 +1236,10 @@ input::placeholder{color:var(--ash-dim);opacity:.65}
         <button onclick="c('device_info',{})">Device</button>
         <button onclick="c('get_ui_tree',{})">UI Tree</button>
         <button onclick="c('get_notifications',{})">Notifs</button>
+      </div>
+      <div class="row">
+        <button onclick="pollGpsOnce()">&#9711; GPS</button>
+        <button onclick="toggleGpsLog()" id="gpstoggle">GPS Auto</button>
       </div>
       <div class="row">
         <button onclick="c('set_perf_mode',{mode:'performance'})">Perf &#9650;</button>
@@ -1433,6 +1460,36 @@ function pend(ex,ey){
   }
   ds=null;
 }
+/* GPS */
+var _gpsTimer=null;
+function _fetchGps(log){
+  return fetch('/execute',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
+    body:JSON.stringify({tool_name:'get_location',parameters:{}})
+  }).then(function(r){return r.json();}).then(function(j){
+    var coords=String(j.result||'').trim();
+    if(!coords)return;
+    var el=document.getElementById('gpsinfo');
+    el.textContent='\u25ce '+coords;
+    el.style.display='';
+    if(log)addLog('gps: '+coords,false);
+  }).catch(function(){});
+}
+function pollGpsOnce(){_fetchGps(true);}
+function toggleGpsLog(){
+  var btn=document.getElementById('gpstoggle');
+  if(_gpsTimer){
+    clearInterval(_gpsTimer);_gpsTimer=null;
+    btn.classList.remove('on');btn.textContent='GPS Auto';
+    addLog('gps logging stopped',false);
+  } else {
+    _fetchGps(true);
+    _gpsTimer=setInterval(function(){_fetchGps(true);},60000);
+    btn.classList.add('on');btn.textContent='GPS Auto \u25cf';
+    addLog('gps logging every 60s',false);
+  }
+}
+_fetchGps(false);
+
 function setKeyStatus(elId, isSet){
   var el=document.getElementById(elId);
   if(!el)return;
@@ -1533,6 +1590,7 @@ function buildOpenAIToolList() {
     T("force_stop",         "Force stop app by package",     {package:str},["package"]),
     T("uninstall_apk",      "Uninstall app by package",      {package:str,keep_data:bool},["package"]),
     T("clear_app_cache",    "Clear app data/cache",          {package:str},["package"]),
+    T("get_location",       "Get GPS coordinates",           {}),
     T("reboot",             "Reboot device",                 {mode:str}),
     T("screen_record_start","Start screen recording",        {output:str,time_limit:num}),
     T("screen_record_stop", "Stop + pull screen recording",  {remote_path:str,local_path:str}),
@@ -1657,6 +1715,19 @@ async function executeTool(name, p) {
     case "force_stop":        { const o=adb(`am force-stop ${p.package}`); invalidateUi(); return o||`Force stopped ${p.package}`; }
     case "uninstall_apk":     return adbExec(`uninstall${p.keep_data?" -k":""} ${p.package}`);
     case "clear_app_cache":   return adb(`pm clear ${p.package}`);
+    case "get_location": {
+      const out = adb("dumpsys location 2>/dev/null | grep -F 'Location['");
+      for (const provider of ["fused","gps","network","passive"]) {
+        const re = new RegExp(`Location\\[${provider}\\s+([\\-\\d.]+),([\\-\\d.]+)(?:\\s+hAcc=([\\d.]+))?`);
+        const m = out.match(re);
+        if (m) {
+          const accStr = m[3] ? ` \u00b1${Math.round(parseFloat(m[3]))}m` : "";
+          return `${parseFloat(m[1]).toFixed(6)}, ${parseFloat(m[2]).toFixed(6)}${accStr} (${provider})`;
+        }
+      }
+      const m2 = out.match(/Location\[\w+ ([\-\d.]+),([\-\d.]+)/);
+      return m2 ? `${parseFloat(m2[1]).toFixed(6)}, ${parseFloat(m2[2]).toFixed(6)}` : "unavailable — ensure location is enabled";
+    }
     case "reboot":            adbExec(`reboot${p.mode&&p.mode!=="normal"?" "+p.mode:""}`); return `Rebooting (${p.mode||"normal"})…`;
     case "screen_record_start": { const safe=(p.output||"/sdcard/screenrecord.mp4").replace(/[^a-zA-Z0-9/_.-]/g,""); adbRoot(`screenrecord --time-limit ${p.time_limit||180} ${safe} &`); return `Recording → ${safe}`; }
     case "screen_record_stop":  { adbRoot("pkill screenrecord 2>/dev/null; true"); await new Promise(r=>setTimeout(r,1200)); const dest=p.local_path||"/data/data/com.termux/files/home/screenrecord.mp4"; adbExec(`pull "${p.remote_path||"/sdcard/screenrecord.mp4"}" "${dest}"`); return `Saved: ${dest}`; }
