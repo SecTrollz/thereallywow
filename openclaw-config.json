@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "moto-device-control": {
+      "command": "node",
+      "args": ["/data/data/com.termux/files/home/moto-mcp/server.mjs"],
+      "env": {
+        "ADB_DEVICE": "172.18.71.77:38665",
+        "MCP_MODE": "stdio"
+      }
+    }
+  }
+}

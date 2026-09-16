@@ -1,0 +1,17 @@
+{
+  "name": "thereallywow-project",
+  "version": "3.0.0",
+  "description": "Android device control via ADB/MCP — 35 tools: UI automation, gaming multi-touch, pixel reading, network capture, live stream",
+  "main": "server.mjs",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "start:http": "MCP_MODE=http PORT=3456 node server.mjs"
+  },
+  "keywords": ["android", "adb", "mcp", "automation", "gaming", "root"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.22.0"
+  }
+}
