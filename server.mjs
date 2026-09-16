@@ -30,7 +30,7 @@ import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import http from "http";
 
-// Load .env from project directory (created by reallywow-setup.sh)
+// Load .env from project directory (created by thereallywow-setup.sh)
 try {
   const __dir = dirname(fileURLToPath(import.meta.url));
   readFileSync(join(__dir, ".env"), "utf8").split("\n").forEach(line => {

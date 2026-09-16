@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
 Really Wow — Android Device Control
-  python reallywow.py                   interactive REPL
-  python reallywow.py start/stop/status server lifecycle
-  python reallywow.py screenshot        capture screen → screen.png
-  python reallywow.py tap <x> <y>      tap coordinates
-  python reallywow.py type <text>       type text
-  python reallywow.py key <keyname>     key event (BACK, HOME, ENTER…)
-  python reallywow.py swipe <x1 y1 x2 y2> [ms]
-  python reallywow.py shell <command>   root shell
-  python reallywow.py launch <pkg>      launch app
-  python reallywow.py stream            print live stream URL
-  python reallywow.py tool <name> [k=v …]  any MCP tool with params
+  python thereallywow.py                   interactive REPL
+  python thereallywow.py start/stop/status server lifecycle
+  python thereallywow.py screenshot        capture screen → screen.png
+  python thereallywow.py tap <x> <y>      tap coordinates
+  python thereallywow.py type <text>       type text
+  python thereallywow.py key <keyname>     key event (BACK, HOME, ENTER…)
+  python thereallywow.py swipe <x1 y1 x2 y2> [ms]
+  python thereallywow.py shell <command>   root shell
+  python thereallywow.py launch <pkg>      launch app
+  python thereallywow.py stream            print live stream URL
+  python thereallywow.py tool <name> [k=v …]  any MCP tool with params
 """
 
 import sys, os, json, subprocess, signal, time, base64, shlex, re, readline
@@ -93,7 +93,7 @@ def call(tool, **params):
             raise RuntimeError(resp["error"])
         return resp.get("result", "")
     except URLError:
-        raise RuntimeError("Server not running — try: python reallywow.py start")
+        raise RuntimeError("Server not running — try: python thereallywow.py start")
 
 # ── Server lifecycle ───────────────────────────────────────────────────────────
 def server_pid():
@@ -125,14 +125,14 @@ def cmd_start():
     for _ in range(16):
         time.sleep(0.5)
         if proc.poll() is not None:
-            err(f"Server exited immediately (code {proc.returncode}) — check: python reallywow.py log")
+            err(f"Server exited immediately (code {proc.returncode}) — check: python thereallywow.py log")
             return
         if health():
             PID_FILE.write_text(str(proc.pid))
             ok(f"Server started (PID {proc.pid}) — {SERVER_URL}")
             return
     proc.terminate()
-    err("Server failed to become healthy — killed. Check: python reallywow.py log")
+    err("Server failed to become healthy — killed. Check: python thereallywow.py log")
 
 def cmd_stop():
     pid = server_pid()
@@ -462,7 +462,7 @@ def main():
         try:
             cmd_tool(args)
         except Exception as e:
-            err(f"Unknown command '{cmd}' — try: python reallywow.py help")
+            err(f"Unknown command '{cmd}' — try: python thereallywow.py help")
             sys.exit(1)
 
 if __name__ == "__main__":

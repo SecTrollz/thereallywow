@@ -8,7 +8,7 @@
 #
 # After this runs:
 #   adb connect <DEVICE_IP>:5555  works forever (survives reboots)
-#   reallywow.py connect <DEVICE_IP>:5555  updates .env + tells server
+#   thereallywow.py connect <DEVICE_IP>:5555  updates .env + tells server
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,6 +105,6 @@ echo -e "${BOLD}${GREEN}  Done!${RESET}"
 echo -e "  From now on, always connect with:"
 echo -e "    ${CYAN}adb connect ${NEW_ADDR}${RESET}"
 echo -e "  Or if IP changes:"
-echo -e "    ${CYAN}python reallywow.py connect <NEW_IP>:${FIXED_PORT}${RESET}"
+echo -e "    ${CYAN}python thereallywow.py connect <NEW_IP>:${FIXED_PORT}${RESET}"
 echo -e "  The port ${FIXED_PORT} is now locked permanently."
 echo ""

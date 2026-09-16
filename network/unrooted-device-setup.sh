@@ -131,7 +131,7 @@ echo -e "  4. Moto connects to this device at: ${CYAN}<mesh-ip>:5555${RESET}"
 echo ""
 echo -e "  ${BOLD}For same-LAN access right now:${RESET}"
 [ -n "$WIFI_IP" ] && \
-  echo -e "  ${CYAN}python reallywow.py connect ${WIFI_IP}:5555${RESET}" || \
+  echo -e "  ${CYAN}python thereallywow.py connect ${WIFI_IP}:5555${RESET}" || \
   echo -e "  Connect to WiFi first"
 
 echo ""

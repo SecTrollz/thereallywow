@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reallywow-setup.sh — one-time setup for thereallywow-project
+# thereallywow-setup.sh — one-time setup for thereallywow-project
 set -e
 
 BOLD="\033[1m"; GREEN="\033[32m"; YELLOW="\033[33m"; RED="\033[31m"; RESET="\033[0m"
@@ -111,58 +111,83 @@ else
   echo "    1. Wireless Debugging is ON in developer options"
   echo "    2. Device and this machine are on the same network"
   echo "    3. You've approved the pairing/connection on device"
-  echo "  You can retry later with: python reallywow.py start"
+  echo "  You can retry later with: python thereallywow.py start"
 fi
 
-# ── Termux boot script (Android only) ─────────────────────────────────────────
+# ── Termux:Boot scripts (Android only) ────────────────────────────────────────
 if [ "$PLATFORM" = termux ]; then
   if ! pkg list-installed 2>/dev/null | grep -q termux-boot; then
     info "Installing Termux:Boot for auto-start on reboot..."
     pkg install -y termux-boot 2>/dev/null || true
   fi
   mkdir -p "$BOOT_DIR"
-  BOOT_SCRIPT="$BOOT_DIR/01-thereallywow.sh"
-  cat > "$BOOT_SCRIPT" <<BOOT
+
+  cat > "$BOOT_DIR/01-adb-connect.sh" <<BOOT
+#!/data/data/com.termux/files/usr/bin/bash
+sleep 5
+set -a
+source "$SCRIPT_DIR/.env" 2>/dev/null
+set +a
+adb connect "\${ADB_DEVICE:-localhost:5555}"
+BOOT
+
+  cat > "$BOOT_DIR/02-mcp-server.sh" <<BOOT
 #!/data/data/com.termux/files/usr/bin/bash
 sleep 10
-cd "$SCRIPT_DIR"
-source .env
+set -a
+source "$SCRIPT_DIR/.env" 2>/dev/null
+set +a
+export MCP_MODE="\${MCP_MODE:-http}"
+export PORT="\${PORT:-3456}"
 for i in \$(seq 1 6); do
   adb connect "\$ADB_DEVICE" >/dev/null 2>&1
   adb -s "\$ADB_DEVICE" get-state 2>/dev/null | grep -q device && break
   sleep 5
 done
-MCP_MODE=http PORT=3456 node "$SCRIPT_DIR/server.mjs" >> "$SCRIPT_DIR/server.log" 2>&1 &
+node "$SCRIPT_DIR/server.mjs" >> "$SCRIPT_DIR/server.log" 2>&1 &
 echo \$! > "$SCRIPT_DIR/server.pid"
 BOOT
-  chmod +x "$BOOT_SCRIPT"
-  ok "Auto-start on boot: $BOOT_SCRIPT"
+
+  cat > "$BOOT_DIR/03-tunnel.sh" <<BOOT
+#!/data/data/com.termux/files/usr/bin/bash
+sleep 15
+set -a
+source "$SCRIPT_DIR/.env" 2>/dev/null
+set +a
+bash "$SCRIPT_DIR/network/tunnel-start.sh" \
+  --host "\${BORE_HOST:-bore.pub}" \
+  --local "\${PORT:-3456}" \
+  >> "$SCRIPT_DIR/network/tunnel.log" 2>&1 &
+BOOT
+
+  chmod +x "$BOOT_DIR/01-adb-connect.sh" "$BOOT_DIR/02-mcp-server.sh" "$BOOT_DIR/03-tunnel.sh"
+  ok "Boot persistence installed (3 scripts)"
 fi
 
-# ── Install reallywow command ──────────────────────────────────────────────────
-SYMLINK="$BIN_DIR/reallywow"
+# ── Install thereallywow command ───────────────────────────────────────────────
+SYMLINK="$BIN_DIR/thereallywow"
 if [ -w "$BIN_DIR" ] || [ "$PLATFORM" = termux ]; then
-  ln -sf "$SCRIPT_DIR/reallywow.py" "$SYMLINK" 2>/dev/null && \
-    chmod +x "$SCRIPT_DIR/reallywow.py" && \
-    ok "Command installed: reallywow" || \
-    info "Could not install global command (run: python reallywow.py)"
+  ln -sf "$SCRIPT_DIR/thereallywow.py" "$SYMLINK" 2>/dev/null && \
+    chmod +x "$SCRIPT_DIR/thereallywow.py" && \
+    ok "Command installed: thereallywow" || \
+    info "Could not install global command (run: python3 thereallywow.py)"
 else
-  info "Run manually: python reallywow.py"
+  info "Run manually: python3 thereallywow.py"
 fi
 
 # ── Start server ───────────────────────────────────────────────────────────────
 info "Starting MCP server..."
-python3 "$SCRIPT_DIR/reallywow.py" start
+python3 "$SCRIPT_DIR/thereallywow.py" start
 
 echo ""
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════╗"
-echo -e "║           Setup Complete! 🎉          ║"
+echo -e "║         thereallywow — ready          ║"
 echo -e "╚══════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  ${BOLD}Usage:${RESET}"
-echo -e "    python reallywow.py              ${YELLOW}# interactive mode${RESET}"
-echo -e "    python reallywow.py screenshot   ${YELLOW}# capture screen${RESET}"
-echo -e "    python reallywow.py shell whoami ${YELLOW}# root shell${RESET}"
-echo -e "    python reallywow.py stream       ${YELLOW}# live video URL${RESET}"
-echo -e "    python reallywow.py status       ${YELLOW}# server status${RESET}"
+echo -e "    python3 thereallywow.py              ${YELLOW}# interactive REPL${RESET}"
+echo -e "    python3 thereallywow.py screenshot   ${YELLOW}# capture screen${RESET}"
+echo -e "    python3 thereallywow.py shell whoami ${YELLOW}# root shell${RESET}"
+echo -e "    python3 thereallywow.py stream       ${YELLOW}# live video URL${RESET}"
+echo -e "    python3 thereallywow.py status       ${YELLOW}# server status${RESET}"
 echo ""

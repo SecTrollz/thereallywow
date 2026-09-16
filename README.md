@@ -30,7 +30,10 @@ Root is required for: `multi_touch`, `rapid_tap`, `joystick`, `swipe_path`, `hol
 ## Setup
 
 ```bash
-bash reallywow-setup.sh
+git clone https://github.com/SecTrollz/thereallywow
+cd thereallywow
+bash thereallywow-setup.sh
+python3 thereallywow.py
 ```
 
 The setup script installs dependencies, prompts for `ADB_DEVICE`, tests the connection, writes `.env`, installs Termux:Boot scripts, and starts the server.
@@ -54,10 +57,10 @@ bash fix-adb-port.sh
 ## Running
 
 ```bash
-python reallywow.py start       # start server in background
-python reallywow.py stop        # stop server
-python reallywow.py status      # check if running
-python reallywow.py             # interactive REPL
+python thereallywow.py start       # start server in background
+python thereallywow.py stop        # stop server
+python thereallywow.py status      # check if running
+python thereallywow.py             # interactive REPL
 ```
 
 REPL commands:
@@ -200,9 +203,9 @@ curl -s -X POST http://localhost:3456/execute \
 ### Bore Tunnel (CGNAT bypass, no port forwarding)
 
 ```bash
-python reallywow.py tunnel start   # opens bore.pub tunnel, writes URL to network/tunnel.url
-python reallywow.py tunnel url     # print current tunnel URL
-python reallywow.py tunnel stop
+python thereallywow.py tunnel start   # opens bore.pub tunnel, writes URL to network/tunnel.url
+python thereallywow.py tunnel url     # print current tunnel URL
+python thereallywow.py tunnel stop
 ```
 
 The server reads `network/tunnel.url` live — no restart needed after opening a tunnel. Agnes gets the tunnel URL from `/api/info`.
@@ -217,13 +220,13 @@ bash network/mesh-init.sh hub
 bash network/mesh-init.sh spoke <hub-public-ip>
 
 # Pair an Android device via QR code
-python reallywow.py qr my-phone
+python thereallywow.py qr my-phone
 
 # Start the mesh (uses wireproxy — no kernel module required)
-python reallywow.py mesh start
+python thereallywow.py mesh start
 
 # Discover all reachable devices
-python reallywow.py discover
+python thereallywow.py discover
 ```
 
 Mesh IPs are in `100.64.0.0/10`. Device identity (keypair) is stored in `network/wireguard/`.
@@ -305,7 +308,7 @@ To restrict access:
 
 ```bash
 echo "MCP_API_KEY=$(openssl rand -hex 32)" >> .env
-python reallywow.py restart
+python thereallywow.py restart
 ```
 
 Note: the web GUI and stream endpoint (`/`, `/stream`, `/screenshot.png`) are intentionally kept public even when a key is set, to allow browser access without configuring headers. Set a firewall or disable the tunnel if the stream must be private.
