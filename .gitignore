@@ -9,3 +9,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.png
+network/tunnel.log
+network/tunnel.pid
+network/tunnel.url
+network/wireguard/

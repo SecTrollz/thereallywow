@@ -1,11 +1,12 @@
 # thereallywow
 
-Android device control server — 44 tools over MCP and HTTP. Tap, swipe, type, read the screen, run root shell commands, stream live video, and automate complex multi-touch gestures. Built to be driven by Agnes AI via OpenClaw.
+Android device control server — 45 tools over MCP and HTTP, with Agnes AI chat built in. Tap, swipe, type, read the screen, run root shell commands, stream live video, get GPS coordinates, and automate complex multi-touch gestures. Driven by Agnes AI via OpenClaw, with a web UI that works on mobile.
 
 ```
-Local:   http://localhost:3456
-Tunnel:  http://bore.pub:<assigned-port>   (punches through CGNAT, no port forwarding)
-Mesh:    http://100.64.0.1:3456            (WireGuard, device-to-device)
+Control panel:  http://localhost:3456
+Agnes chat:     http://localhost:3456/chat
+Tunnel:         http://bore.pub:<port>   (punches through CGNAT, no port forwarding)
+Mesh:           http://100.64.0.1:3456  (WireGuard, device-to-device)
 ```
 
 ---
@@ -33,18 +34,22 @@ Root is required for: `multi_touch`, `rapid_tap`, `joystick`, `swipe_path`, `hol
 git clone https://github.com/SecTrollz/thereallywow
 cd thereallywow
 bash thereallywow-setup.sh
-python3 thereallywow.py
 ```
 
-The setup script installs dependencies, prompts for `ADB_DEVICE`, tests the connection, writes `.env`, installs Termux:Boot scripts, and starts the server.
+The setup script:
+- Installs all dependencies
+- Prompts for your `ADB_DEVICE` (IP:PORT)
+- Tests the ADB connection
+- Auto-generates a random `MCP_API_KEY`
+- Writes `.env` with correct permissions (600)
+- Installs Termux:Boot scripts for auto-start on reboot
+- Starts the server
 
 To set up ADB on an **unrooted carrier-locked device** (no bootloader unlock needed):
 
 ```bash
 bash network/unrooted-device-setup.sh
 ```
-
-This runs `adb tcpip 5555` from within the device's own Termux and installs a Termux:Boot script so the port survives reboots.
 
 To lock ADB to a **static port 5555** on a rooted device:
 
@@ -57,10 +62,11 @@ bash fix-adb-port.sh
 ## Running
 
 ```bash
-python thereallywow.py start       # start server in background
-python thereallywow.py stop        # stop server
-python thereallywow.py status      # check if running
-python thereallywow.py             # interactive REPL
+python3 thereallywow.py start      # start server in background
+python3 thereallywow.py stop       # stop server
+python3 thereallywow.py restart    # restart server
+python3 thereallywow.py status     # check if running
+python3 thereallywow.py            # interactive REPL
 ```
 
 REPL commands:
@@ -81,7 +87,7 @@ qr [name]                        print QR to pair a device into the mesh
 discover                         find ADB devices on local network and mesh
 ui                               dump UI tree
 device                           device info
-tool <name> [k=v …]              call any of the 44 tools directly
+tool <name> [k=v …]              call any of the 45 tools directly
 start / stop / restart / status  server lifecycle
 log                              tail server log
 
@@ -92,12 +98,30 @@ Aliases: click=tap  input=type  keyevent=key  open=launch  sh=shell
 
 ## Web GUI
 
-Open `http://localhost:3456` in a browser.
+Open `http://localhost:3456` in a browser — works on mobile too.
 
 - **Click** the screen feed → tap
 - **Drag** → swipe
 - **Hold 600ms** → long press
 - Sidebar: navigate, transmit text, root shell, ADB reconnect, screenshot, screen record, app launch/stop, rotate, network capture
+- **Settings panel**: enter your Agnes API key and server key directly in the UI — stored securely in `.env`
+
+Open `http://localhost:3456/chat` for the Agnes AI chat interface.
+
+---
+
+## Agnes AI Chat
+
+The `/chat` page connects Agnes to your device via OpenClaw. First-time setup takes about 30 seconds:
+
+1. Install [OpenClaw](https://github.com/openclaw/openclaw) and start the gateway:
+   ```bash
+   openclaw gateway start
+   openclaw gateway keys create --name thereallywow
+   ```
+2. Open `http://localhost:3456/chat` and enter your gateway token
+3. Copy the MCP config JSON shown and paste it into OpenClaw's MCP settings
+4. Start chatting — Agnes can see your screen, tap, type, and control the device
 
 ---
 
@@ -106,14 +130,18 @@ Open `http://localhost:3456` in a browser.
 All endpoints accept and return JSON. Set `Authorization: Bearer <key>` if `MCP_API_KEY` is configured.
 
 ```
-GET  /tools          OpenAI-compatible function schema for all 44 tools
-POST /execute        { "tool_name": "...", "parameters": { ... } }
-GET  /stream?fps=N   MJPEG live stream
-GET  /screenshot.png live screenshot
-GET  /api/info       device status, mesh IP, tunnel URL, Agnes endpoints
-POST /reconnect      { "device": "IP:PORT" }  live-switch ADB target
-GET  /health         server health + tool count
-GET  /               web control panel
+GET  /tools                  OpenAI-compatible function schema for all 45 tools
+POST /execute                { "tool_name": "...", "parameters": { ... } }
+GET  /stream?fps=N           MJPEG live stream
+GET  /screenshot.png         live screenshot
+GET  /api/info               device status, mesh IP, tunnel URL, Agnes endpoints
+GET  /api/openclaw-config    one-paste OpenClaw MCP config JSON
+POST /api/chat               Agnes chat proxy (loops tool calls automatically)
+POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL
+POST /reconnect              { "device": "IP:PORT" }  live-switch ADB target
+GET  /health                 server health + tool count
+GET  /                       web control panel
+GET  /chat                   Agnes AI chat UI
 ```
 
 Example:
@@ -168,6 +196,7 @@ curl -s -X POST http://localhost:3456/execute \
 | `launch_app` | Launch app by package name |
 | `force_stop` | Force-stop an app |
 | `device_info` | Model, Android version, battery, serial |
+| `get_location` | GPS coordinates (lat, lon, accuracy) |
 | `rotate_screen` | Set rotation (0/90/180/270/auto) |
 | `set_perf_mode` | Toggle CPU performance governor |
 | `reboot` | Reboot (normal/recovery/bootloader) |
@@ -203,12 +232,12 @@ curl -s -X POST http://localhost:3456/execute \
 ### Bore Tunnel (CGNAT bypass, no port forwarding)
 
 ```bash
-python thereallywow.py tunnel start   # opens bore.pub tunnel, writes URL to network/tunnel.url
-python thereallywow.py tunnel url     # print current tunnel URL
-python thereallywow.py tunnel stop
+python3 thereallywow.py tunnel start   # opens bore.pub tunnel, writes URL to network/tunnel.url
+python3 thereallywow.py tunnel url     # print current tunnel URL
+python3 thereallywow.py tunnel stop
 ```
 
-The server reads `network/tunnel.url` live — no restart needed after opening a tunnel. Agnes gets the tunnel URL from `/api/info`.
+The server reads `network/tunnel.url` live — no restart needed after opening a tunnel.
 
 ### WireGuard Mesh (device-to-device, no internet required)
 
@@ -220,18 +249,16 @@ bash network/mesh-init.sh hub
 bash network/mesh-init.sh spoke <hub-public-ip>
 
 # Pair an Android device via QR code
-python thereallywow.py qr my-phone
+python3 thereallywow.py qr my-phone
 
 # Start the mesh (uses wireproxy — no kernel module required)
-python thereallywow.py mesh start
+python3 thereallywow.py mesh start
 
 # Discover all reachable devices
-python thereallywow.py discover
+python3 thereallywow.py discover
 ```
 
-Mesh IPs are in `100.64.0.0/10`. Device identity (keypair) is stored in `network/wireguard/`.
-
-To set up a VPS as a hub relay:
+Mesh IPs are in `100.64.0.0/10`. To set up a VPS as a hub relay:
 
 ```bash
 bash network/relay-setup.sh   # run on the VPS
@@ -239,49 +266,46 @@ bash network/relay-setup.sh   # run on the VPS
 
 ---
 
-## Agnes / OpenClaw Integration
+## OpenClaw / MCP Integration
 
-Copy the `mcpServers` block from `openclaw-config.json` into your Claude Desktop or OpenClaw config:
+Get the auto-generated config from the server:
+
+```bash
+curl http://localhost:3456/api/openclaw-config
+```
+
+Or open `http://localhost:3456/chat` — the onboarding wizard generates it for you.
+
+For manual MCP setup, paste into your OpenClaw config:
 
 ```json
 {
   "mcpServers": {
     "thereallywow": {
       "command": "node",
-      "args": ["/data/data/com.termux/files/home/moto-mcp/server.mjs"],
-      "env": { "MCP_MODE": "stdio" }
+      "args": ["/path/to/server.mjs"],
+      "env": { "MCP_MODE": "stdio", "MCP_API_KEY": "<your-key>" }
     }
   }
 }
 ```
 
-For HTTP mode (Agnes via API):
-
-```
-GET  <tunnel-url>/tools      → tool list
-POST <tunnel-url>/execute    → run tool
-GET  <tunnel-url>/stream     → live feed
-GET  <tunnel-url>/api/info   → endpoints + system prompt
-```
-
-Agnes system prompt is embedded in `/api/info` under `agnes.system_prompt`.
-
 ---
 
 ## Environment Variables
 
-All values are read from `.env` in the project root. Boot scripts source `.env` at startup.
+All values are read from `.env` in the project root. The setup script generates this file automatically.
 
 | Variable | Default | Description |
 |---|---|---|
-| `ADB_DEVICE` | `192.168.1.168:5556` | ADB target address |
-| `MCP_MODE` | `stdio` | `stdio` for MCP clients, `http` for HTTP/browser |
+| `ADB_DEVICE` | *(required)* | ADB target address (IP:PORT) |
+| `MCP_MODE` | `http` | `stdio` for MCP clients, `http` for browser |
 | `PORT` | `3456` | HTTP server port |
-| `MCP_API_KEY` | *(none)* | Bearer token for auth-gated routes |
+| `MCP_API_KEY` | *(auto-generated)* | Bearer token for HTTP auth |
+| `AGNES_API_KEY` | *(none)* | OpenClaw gateway token for Agnes chat |
+| `AGNES_BASE_URL` | `http://localhost:18789/v1` | OpenClaw gateway base URL |
+| `AGNES_MODEL` | `openclaw:main` | Model identifier for Agnes |
 | `TOUCH_DEV` | `/dev/input/event7` | sendevent input device path |
-| `WG_MESH_IP` | *(none)* | WireGuard mesh IP (set by mesh-init.sh) |
-| `WG_PUBKEY` | *(none)* | WireGuard public key (set by mesh-init.sh) |
-| `TUNNEL_URL` | *(none)* | Last known bore tunnel URL |
 | `BORE_HOST` | `bore.pub` | Bore relay host |
 
 ---
@@ -296,19 +320,12 @@ After setup, three scripts run automatically on device boot:
 | `02-mcp-server.sh` | 10s | Start node server, wait for ADB |
 | `03-tunnel.sh` | 15s | Open bore tunnel |
 
-All scripts source `.env` dynamically — changing `ADB_DEVICE` in `.env` takes effect on next reboot with no further changes.
+All scripts source `.env` dynamically.
 
 ---
 
-## Security Note
+## Security
 
-`MCP_API_KEY` is not set by default. When unset, all endpoints including root shell execution are open to anyone who can reach the server. If the bore tunnel is active, this means the open internet.
+`MCP_API_KEY` is auto-generated during setup (64 hex chars). Find it in `.env` or the settings panel at `http://localhost:3456`.
 
-To restrict access:
-
-```bash
-echo "MCP_API_KEY=$(openssl rand -hex 32)" >> .env
-python thereallywow.py restart
-```
-
-Note: the web GUI and stream endpoint (`/`, `/stream`, `/screenshot.png`) are intentionally kept public even when a key is set, to allow browser access without configuring headers. Set a firewall or disable the tunnel if the stream must be private.
+The web GUI (`/`, `/stream`, `/screenshot.png`, `/chat`) is kept accessible without the key to allow browser access. Set a firewall or disable the tunnel if the stream must be private.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * thereallywow v3.1.0 — Android Device Control MCP Server
+ * thereallywow v1.0.0 — Android Device Control MCP Server
  *
  * Env vars:
  *   ADB_DEVICE   — target device (default 192.168.1.168:5556)
@@ -382,7 +382,7 @@ async function pollUntil(predicate, timeoutMs, pollMs = 500) {
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({ name: "thereallywow", version: "3.1.0",
+const server = new McpServer({ name: "thereallywow", version: "1.0.0",
   description: "Full Android device control — UI, root, gaming input, multi-touch, network" });
 
 // ── Navigation & UI tools ─────────────────────────────────────────────────────
@@ -2219,7 +2219,7 @@ function startHttpServer(port = 3456) {
 
     if (url.pathname === "/health") {
       res.writeHead(200, {"Content-Type":"application/json"});
-      return res.end(JSON.stringify({status:"ok",server:"thereallywow",version:"3.1.0",device:DEVICE,device_w:DEVICE_W,device_h:DEVICE_H,adb_alive:adbIsAlive(),viewers:streamClients.size,tools:buildOpenAIToolList().length,tunnel:getTunnelUrl()}));
+      return res.end(JSON.stringify({status:"ok",server:"thereallywow",version:"1.0.0",device:DEVICE,device_w:DEVICE_W,device_h:DEVICE_H,adb_alive:adbIsAlive(),viewers:streamClients.size,tools:buildOpenAIToolList().length,tunnel:getTunnelUrl()}));
     }
 
     if (url.pathname === "/api/info") {
@@ -2232,7 +2232,7 @@ function startHttpServer(port = 3456) {
         mesh_ip:MESH_IP,
         tunnel_url:tunnel,
         stream:`/stream?fps=2`, viewer:`/`,
-        tools:buildOpenAIToolList().length, version:"3.1.0",
+        tools:buildOpenAIToolList().length, version:"1.0.0",
         keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY") },
         agnes:{
           local:`http://localhost:${PORT}`,

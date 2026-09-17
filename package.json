@@ -1,14 +1,14 @@
 {
-  "name": "thereallywow-project",
-  "version": "3.1.0",
-  "description": "Android device control via ADB/MCP — 44 tools: UI automation, gaming multi-touch, pixel reading, network capture, live stream, web GUI",
+  "name": "thereallywow",
+  "version": "1.0.0",
+  "description": "Android device control server — 45 tools over MCP and HTTP. Agnes AI chat, tap, swipe, type, GPS, root shell, live MJPEG stream, multi-touch gaming input.",
   "main": "server.mjs",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
     "start:http": "MCP_MODE=http PORT=3456 node server.mjs"
   },
-  "keywords": ["android", "adb", "mcp", "automation", "gaming", "root"],
+  "keywords": ["android", "adb", "mcp", "agnes", "openclaw", "automation", "gaming", "root", "termux"],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
