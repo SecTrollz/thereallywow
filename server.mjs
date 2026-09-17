@@ -1107,35 +1107,38 @@ header{
     <!-- Step 0: Enter OpenClaw key -->
     <div id="step0">
       <h3>Connect Agnes <small>Step 1 of 3</small></h3>
-      <p>Enter your OpenClaw API key. Agnes uses this to think and respond.</p>
+      <p>Agnes runs inside OpenClaw. Generate a gateway token in OpenClaw, then paste it below.</p>
+      <p class="modal-note" style="margin-top:-8px">In OpenClaw: run <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px">openclaw gateway keys create --name thereallywow</code> to get your token.</p>
       <div>
-        <label>OpenClaw API Key</label>
-        <input id="ob-key" type="password" placeholder="Paste your OpenClaw key here…" autocomplete="new-password">
+        <label>OpenClaw Gateway Token</label>
+        <input id="ob-key" type="password" placeholder="Paste gateway token here…" autocomplete="new-password">
       </div>
       <div>
-        <label>OpenClaw Base URL</label>
-        <input id="ob-url" type="url" placeholder="https://api.openai.com/v1" autocorrect="off" autocapitalize="off">
+        <label>OpenClaw Gateway URL</label>
+        <input id="ob-url" type="url" value="http://localhost:18789/v1" autocorrect="off" autocapitalize="off">
       </div>
       <div>
-        <label>Model <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional)</span></label>
-        <input id="ob-model" type="text" placeholder="gpt-4o">
+        <label>Model / Agent ID</label>
+        <input id="ob-model" type="text" value="openclaw:main" placeholder="openclaw:main">
       </div>
-      <p class="modal-note">Your key is saved to .env on this device only — never sent anywhere else.</p>
+      <p class="modal-note">Token saved to .env on this device only. Get OpenClaw free at <strong>github.com/openclaw/openclaw</strong></p>
       <div class="modal-row">
         <button onclick="closeOnboard()">Skip for now</button>
         <button class="primary" onclick="onboardStep1()">Continue</button>
       </div>
     </div>
 
-    <!-- Step 1: Copy server config into OpenClaw -->
+    <!-- Step 1: Enable gateway + copy MCP config -->
     <div id="step1" style="display:none">
       <h3>Add this server to OpenClaw <small>Step 2 of 3</small></h3>
-      <p>Copy this config into your OpenClaw MCP settings so it can reach this device.</p>
+      <p>First, enable the OpenClaw gateway endpoint if not already on:</p>
+      <pre style="background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:10px;overflow-x:auto;margin-bottom:8px">{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true}}}}}</pre>
+      <p>Then copy this MCP config into OpenClaw: <strong>Settings → MCP Servers → Add</strong></p>
       <div class="copy-row">
         <textarea id="ob-config" rows="5" readonly></textarea>
         <button onclick="copyConfig()" id="copybtn">Copy</button>
       </div>
-      <p class="modal-note">In OpenClaw: Settings → MCP Servers → Add → paste the JSON above.</p>
+      <p class="modal-note">Once added, OpenClaw restarts the MCP connection automatically.</p>
       <div class="modal-row">
         <button onclick="onboardBack()">Back</button>
         <button class="primary" onclick="onboardStep2()">Done</button>
@@ -1159,16 +1162,16 @@ header{
   <div class="modal-box">
     <h3>Agnes Settings</h3>
     <div>
-      <label>OpenClaw Base URL</label>
-      <input id="cfg-url" type="url" placeholder="https://api.openai.com/v1">
+      <label>OpenClaw Gateway URL</label>
+      <input id="cfg-url" type="url" placeholder="http://localhost:18789/v1">
     </div>
     <div>
-      <label>OpenClaw API Key</label>
-      <input id="cfg-key" type="password" placeholder="(already set — paste to change)" autocomplete="new-password">
+      <label>Gateway Token</label>
+      <input id="cfg-key" type="password" placeholder="(set — paste to change)" autocomplete="new-password">
     </div>
     <div>
-      <label>Model</label>
-      <input id="cfg-model" type="text" placeholder="gpt-4o">
+      <label>Model / Agent ID</label>
+      <input id="cfg-model" type="text" placeholder="openclaw:main">
     </div>
     <div>
       <label>Server config for OpenClaw</label>
@@ -1364,8 +1367,12 @@ fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(fun
 /* Settings modal */
 function openSettings(){
   fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'Paste your OpenClaw key…';
+    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'OpenClaw gateway token';
   }).catch(function(){});
+  var urlEl=document.getElementById('cfg-url');
+  if(!urlEl.value)urlEl.placeholder='http://localhost:18789/v1';
+  var modelEl=document.getElementById('cfg-model');
+  if(!modelEl.value)modelEl.placeholder='openclaw:main';
   document.getElementById('modal').classList.add('show');
   loadConfig('cfg-config');
 }
@@ -1625,7 +1632,7 @@ input::placeholder{color:var(--text-muted)}
     <div class="sec-body">
       <div style="font-size:9px;color:var(--ash-dim);margin-bottom:6px;letter-spacing:.4px">Values written to .env — never echoed back</div>
       <label style="font-size:9px;color:var(--ash-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Agnes API Key <span id="agnes-key-status"></span></label>
-      <input id="agnes-key-in" type="password" class="full" placeholder="sk-ant-… or OpenClaw key" autocomplete="new-password">
+      <input id="agnes-key-in" type="password" class="full" placeholder="OpenClaw gateway token" autocomplete="new-password">
       <div class="row" style="margin-bottom:8px">
         <button onclick="saveKey('AGNES_API_KEY','agnes-key-in','agnes-key-status')">Save</button>
         <button onclick="clearKey('AGNES_API_KEY','agnes-key-status')">Clear</button>
@@ -1638,7 +1645,7 @@ input::placeholder{color:var(--text-muted)}
       </div>
       <div style="font-size:9px;color:var(--text-muted);margin-top:5px;letter-spacing:.3px">Server key change requires restart</div>
       <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">OpenClaw Base URL</label>
-      <input id="url-in" type="url" class="full" placeholder="https://api.openai.com/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <input id="url-in" type="url" class="full" placeholder="http://localhost:18789/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
       <button onclick="saveKey('AGNES_BASE_URL','url-in','')" class="full">Save URL</button>
     </div>
   </div>
