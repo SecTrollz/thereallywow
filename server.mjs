@@ -1450,16 +1450,19 @@ input::placeholder{color:var(--text-muted)}
 /* ── Mobile ── */
 @media (max-width:640px){
   :root{--btn-h:44px;--radius:10px;--radius-sm:8px}
-  header{height:54px;padding:0 12px}
+  header{height:54px;padding:0 10px;gap:6px}
   .logo{font-size:16px}
   #devinfo{display:none}
+  #gpsinfo{display:none!important}
+  #fpswrap{display:none}
+  #pausebtn{display:none}
   main{flex-direction:column}
   #wrap{flex:0 0 auto;height:calc(100vw * 16 / 9);max-height:52dvh;width:100%}
   aside{width:100%;flex:1;border-left:none;border-top:1px solid var(--border);overflow-y:auto}
   .sec h4{font-size:11px;padding:13px 14px}
   button{font-size:13px}
   input,select{font-size:15px}
-  .hbtn{height:36px;font-size:12px}
+  .hbtn{height:36px;font-size:12px;padding:0 10px}
 }
 @media (max-width:360px){
   .logo{font-size:14px}
