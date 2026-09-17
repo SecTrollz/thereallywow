@@ -1359,9 +1359,19 @@ function onboardStep2(){
 }
 document.getElementById('onboard').addEventListener('click',function(e){if(e.target===this)closeOnboard();});
 
-/* Check on load — show onboarding if Agnes key not set */
+/* Check on load — show connect banner if Agnes key not set */
 fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-  if(d.keys&&!d.keys.agnes_key_set){showOnboard();}
+  if(d.keys&&!d.keys.agnes_key_set){
+    var empty=document.getElementById('empty');
+    if(empty){
+      var banner=document.createElement('button');
+      banner.className='suggestion';
+      banner.style.cssText='background:rgba(99,179,237,.12);border-color:rgba(99,179,237,.4);color:var(--accent);margin-top:8px;font-weight:600';
+      banner.textContent='⚙ Connect Agnes AI (OpenClaw setup)';
+      banner.onclick=function(){showOnboard();};
+      empty.appendChild(banner);
+    }
+  }
 }).catch(function(){});
 
 /* Settings modal */
@@ -2180,6 +2190,11 @@ function startHttpServer(port = 3456) {
       return res.end(VIEWER_HTML(port, fps, API_KEY));
     }
 
+    if (url.pathname === "/chat") {
+      res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"});
+      return res.end(CHAT_HTML(API_KEY));
+    }
+
     // ── Auth-gated routes (token= accepted for browser <img> sources) ──────────
 
     if (!checkAuth(req, res, url)) return;
@@ -2396,11 +2411,6 @@ function startHttpServer(port = 3456) {
       }
     }
 
-    if (url.pathname === "/chat") {
-      if (!checkAuth(req, res, url)) return;
-      res.writeHead(200, {"Content-Type":"text/html"});
-      return res.end(CHAT_HTML(API_KEY));
-    }
 
     res.writeHead(404, {"Content-Type":"application/json"});
     res.end(JSON.stringify({error:"Not found"}));
