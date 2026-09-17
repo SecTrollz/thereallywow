@@ -1353,7 +1353,7 @@ function closeSettings(){document.getElementById('modal').classList.remove('show
 function fillOllama(){
   document.getElementById('cfg-key').value='ollama';
   document.getElementById('cfg-url').value='http://127.0.0.1:11434/v1';
-  document.getElementById('cfg-model').value='qwen2.5:3b';
+  document.getElementById('cfg-model').value='hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M';
 }
 function saveSettings(){
   var key=document.getElementById('cfg-key').value.trim();
@@ -2162,7 +2162,7 @@ function startHttpServer(port = 3456) {
         keys:{ server_key_set:!!currentApiKey(), agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
                agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"",
                ollama_base_url:readEnvKey("OLLAMA_BASE_URL")||"http://127.0.0.1:11434/v1",
-               ollama_model:readEnvKey("OLLAMA_MODEL")||"qwen2.5:3b" },
+               ollama_model:readEnvKey("OLLAMA_MODEL")||"hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M" },
         agnes:{
           local:`http://localhost:${PORT}`,
           mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
@@ -2287,7 +2287,7 @@ function startHttpServer(port = 3456) {
       const cloudUrl   = (readEnvKey("AGNES_BASE_URL") || "https://apihub.agnes-ai.com/v1").replace(/\/+$/,"");
       const cloudModel = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
       const localUrl   = (readEnvKey("OLLAMA_BASE_URL") || "http://127.0.0.1:11434/v1").replace(/\/+$/,"");
-      const localModel = readEnvKey("OLLAMA_MODEL") || "qwen2.5:3b";
+      const localModel = readEnvKey("OLLAMA_MODEL") || "hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M";
       // Local inference on weak/throttled hardware (cold model load, Android Doze
       // deprioritizing a background Termux process) can legitimately take a while, so it
       // gets a much longer budget than the cloud call before being treated as unreachable.

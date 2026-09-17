@@ -123,7 +123,7 @@ Every `/api/chat` request tries the cloud key first, and **falls back to a local
 - the key is wrong/expired, or the account is blocked
 - the request is blocked by a firewall/proxy, or the cloud is just unreachable
 
-It tries `http://127.0.0.1:11434/v1` with `qwen2.5:3b` by default — if Ollama happens to be running locally (see below) with that model pulled, chat keeps working with zero configuration. If the tool call had already run partway against the cloud before it failed, the fallback picks up from there instead of re-running device actions that already happened. Only if *both* the cloud and the local fallback fail do you see an error, naming both problems. When the fallback answers, the chat UI labels it "Agnes · local model" so you know which one responded. Override the fallback target with `OLLAMA_BASE_URL` / `OLLAMA_MODEL` in `.env` if you're running a different model or port.
+It tries `http://127.0.0.1:11434/v1` with `hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M` by default — if Ollama happens to be running locally (see below) with that model pulled, chat keeps working with zero configuration. If the tool call had already run partway against the cloud before it failed, the fallback picks up from there instead of re-running device actions that already happened. Only if *both* the cloud and the local fallback fail do you see an error, naming both problems. When the fallback answers, the chat UI labels it "Agnes · local model" so you know which one responded. Override the fallback target with `OLLAMA_BASE_URL` / `OLLAMA_MODEL` in `.env` if you're running a different model or port.
 
 Every request to either endpoint is time-bounded (`AGNES_TIMEOUT_MS` / `OLLAMA_TIMEOUT_MS`, see below) — without that, a stalled backend (Ollama still cold-loading a model on a weak phone, Android's Doze mode throttling a backgrounded Termux process, a half-dead connection to a crashed server) would hang the whole chat request forever with no error, indistinguishable from the UI just not responding. A timeout turns that into a clear message instead.
 
@@ -131,12 +131,26 @@ Every request to either endpoint is time-bounded (`AGNES_TIMEOUT_MS` / `OLLAMA_T
 
 The chat endpoint is just OpenAI-compatible HTTP, so it works unmodified against a local [Ollama](https://ollama.com) instance — including one running **on the device itself** via Termux, for a fully offline setup with no API key and no rate limits. Pulling a model here is also what makes the automatic fallback above work.
 
+#### Why local chat was slow/broken, and the actual fix
+
+Every request sends the full 45-tool schema to the model — that's **~13.7 KB of JSON, ~3,400+ tokens**, before the system prompt or a single message of conversation history is added (measured directly: `buildOpenAIToolList()` → `JSON.stringify` on this repo's own tool list). Ollama's compiled-in default context window is **4096 tokens**, so on a stock `ollama serve` the tool definitions alone eat most of it — the rest gets silently truncated instead of erroring, which shows up as wrong/missing tool calls, the model looping through retries, or the `/api/chat` handler eventually giving up with "Too many tool rounds." Worse: **this can't be fixed per-request** through the `/v1/chat/completions` endpoint this project talks to — `num_ctx` and `keep_alive` are silently ignored there ([known Ollama limitation](https://github.com/ollama/ollama/pull/11249)); they only take effect through the native `/api/chat` API or as server-wide env vars. Combined with the default 5-minute `keep_alive`, any pause between chat messages also means the *next* message pays a full cold model load off phone storage — the actual source of the multi-minute stalls.
+
+The fix is two env vars on the **Ollama server itself**, not a per-request setting, so start it like this instead of bare `ollama serve &`:
+
 ```bash
 pkg install ollama        # or: curl -fsSL https://ollama.com/install.sh | sh
-ollama serve &
-ollama pull qwen2.5:1.5b  # ~1GB — for the weakest phones (≲2GB free RAM)
+OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=30m ollama serve &
+```
+
+- `OLLAMA_CONTEXT_LENGTH=8192` doubles the default so the tool schema plus real conversation history actually fits, instead of being cut off.
+- `OLLAMA_KEEP_ALIVE=30m` keeps the model resident in RAM between chat turns instead of reloading it from storage every time the phone screen locks or you pause for a few minutes (use `-1` to keep it loaded indefinitely if RAM allows).
+
+The setup script now installs a `02-ollama-serve.sh` Termux:Boot script with both variables baked in when it detects Ollama is already installed (see [Boot Persistence](#boot-persistence-termuxboot) below), so this survives reboots without manual re-entry.
+
+```bash
+ollama pull hf.co/Salesforce/xLAM-2-1b-fc-r-gguf:Q4_K_M   # ~1GB — for the weakest phones (≲2GB free RAM)
 # or, if the phone can spare it — meaningfully more reliable at tool calling:
-ollama pull qwen2.5:3b    # ~2GB — recommended when ≥3GB free RAM is available
+ollama pull hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M   # ~2GB — recommended when ≥3GB free RAM is available
 ```
 
 Then in the chat page's Settings, click **⚡ Use a local Ollama model instead** (or set these by hand):
@@ -144,17 +158,18 @@ Then in the chat page's Settings, click **⚡ Use a local Ollama model instead**
 | Field | Value |
 |---|---|
 | API Base URL | `http://127.0.0.1:11434/v1` |
-| Model | `qwen2.5:1.5b` (or `qwen2.5:3b`) |
+| Model | `hf.co/Salesforce/xLAM-2-1b-fc-r-gguf:Q4_K_M` (or the 3b variant) |
 | API Key | anything — Ollama ignores it, e.g. `ollama` |
 
 Every model gets the same full 45-tool list as the cloud API — nothing is trimmed or excluded based on model choice.
 
 **Model choice — what we actually found testing this against the server, not just spec sheets:**
 - We looked hard for something fine-tuned *specifically* for function-calling rather than a generic chat model — [Hammer2.1](https://huggingface.co/MadeAgents/Hammer2.1-1.5b) is exactly that, and benchmarks ahead of much larger general models on BFCL. It doesn't ship Ollama tool support out of the box (a [known open issue](https://huggingface.co/eaddario/Hammer2.1-7b-GGUF/discussions/1)) — we built a custom `Modelfile` to fix that and confirmed real tool calls (`device_info`, correct empty-args) come through. But it turned out unusable *for this chat UI*: it's trained purely as a function router, so any turn that isn't a tool call — small talk, a follow-up explanation, a command it decides doesn't need a tool — comes back as literally `[]` instead of a sentence, and in our testing it also missed a plain "open Chrome" request outright. Great at the narrow BFCL task, not fit for a conversational control interface.
-- **`qwen2.5:1.5b`** (general instruct model, not tool-specialized) handled battery/status questions and chit-chat correctly, but was inconsistent on multi-step app-launch commands against the full 45-tool list. Runs on very constrained hardware (~1GB).
-- **`qwen2.5:3b`** was the more reliable of the two in our testing and still runs on a mid-low-end phone (~2GB). **Recommended whenever the device has the RAM for it** — tool-selection accuracy generally improves with model size when the full tool list is in play.
+- We went looking for something that closes exactly that gap — tool-calling-specialist accuracy *without* going mute on ordinary turns — and landed on Salesforce's **[xLAM-2](https://huggingface.co/Salesforce/xLAM-2-3b-fc-r-gguf)** series (`fc-r` = function-calling, research release). It's a Qwen2.5 backbone further trained on Salesforce's APIGen-MT pipeline, which specifically simulates multi-turn agent↔human interplay rather than single isolated function calls — the published numbers show it (56% multi-turn accuracy, 94.4% relevance/hallucination detection) beating GPT-4o (41%) and o1 (36%) in function-calling mode on BFCL's multi-turn split, and unlike Hammer it's documented to answer plain conversational turns in plain text instead of an empty tool array. Ships official GGUFs pullable straight from Hugging Face (`ollama pull hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M` — no custom Modelfile needed), and its output for a tool call is the same bare `[{"name":...,"arguments":{...}}]` shape this project's fallback parser (below) already recovers, so it degrades gracefully even if a given Ollama build's tool-call extraction misses it. One tradeoff: it's released under **CC-BY-NC-4.0** (non-commercial/research), unlike Qwen's Apache-2.0 — fine for personal on-device use, worth knowing if you build on top of this.
+  - **`hf.co/Salesforce/xLAM-2-1b-fc-r-gguf`** (1B) is the weak-phone tier — its smallest quant (Q2_K, 676 MB) undercuts even `qwen2.5:1.5b` in size while still being tool/multi-turn tuned rather than a generic instruct model.
+  - **`hf.co/Salesforce/xLAM-2-3b-fc-r-gguf`** (3B, ~2GB at Q4_K_M) is the **recommended default** whenever the device has the RAM for it — same tier as the old `qwen2.5:3b` recommendation, purpose-built for this instead of general-purpose.
 
-The `/api/chat` handler also has a fallback parser for local models (like Hammer2.1's Modelfile above) that emit a raw `[{"name":...,"arguments":{...}}]` JSON array as plain text instead of populating the standard `tool_calls` field — useful if you experiment with other GGUF imports that hit the same Ollama template gap.
+The `/api/chat` handler also has a fallback parser for local models (like Hammer2.1's Modelfile above, and xLAM's native output format) that emit a raw `[{"name":...,"arguments":{...}}]` JSON array as plain text instead of populating the standard `tool_calls` field — useful if you experiment with other GGUF imports that hit the same Ollama template gap.
 
 ---
 
@@ -339,7 +354,7 @@ All values are read from `.env` in the project root. The setup script generates 
 | `AGNES_BASE_URL` | `https://apihub.agnes-ai.com/v1` | OpenAI-compatible chat API base URL — point at `http://127.0.0.1:11434/v1` for local Ollama |
 | `AGNES_MODEL` | `agnes-2.0-flash` | Model identifier to send to the chat API |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Automatic local-fallback endpoint, used whenever the cloud call fails |
-| `OLLAMA_MODEL` | `qwen2.5:3b` | Automatic local-fallback model |
+| `OLLAMA_MODEL` | `hf.co/Salesforce/xLAM-2-3b-fc-r-gguf:Q4_K_M` | Automatic local-fallback model |
 | `AGNES_TIMEOUT_MS` | `45000` | Max wait for the cloud call before treating it as failed and trying the fallback |
 | `OLLAMA_TIMEOUT_MS` | `180000` | Max wait for the local fallback — generous by default since a cold model load on a weak/throttled phone can genuinely take minutes |
 | `TOUCH_DEV` | `/dev/input/event7` | sendevent input device path |
@@ -349,15 +364,16 @@ All values are read from `.env` in the project root. The setup script generates 
 
 ## Boot Persistence (Termux:Boot)
 
-After setup, three scripts run automatically on device boot:
+After setup, these scripts run automatically on device boot:
 
 | Script | Delay | Action |
 |---|---|---|
 | `01-adb-connect.sh` | 5s | `adb connect $ADB_DEVICE` |
-| `02-mcp-server.sh` | 10s | Start node server, wait for ADB |
-| `03-tunnel.sh` | 15s | Open bore tunnel |
+| `02-ollama-serve.sh` *(only if Ollama is installed at setup time)* | 5s | `ollama serve` with `OLLAMA_CONTEXT_LENGTH=8192` / `OLLAMA_KEEP_ALIVE=30m` so local chat isn't context-truncated or cold-reloading every turn (see [local chat performance](#why-local-chat-was-slowbroken-and-the-actual-fix) above) |
+| `03-mcp-server.sh` | 10s | Start node server, wait for ADB |
+| `04-tunnel.sh` | 15s | Open bore tunnel |
 
-All scripts source `.env` dynamically.
+All scripts source `.env` dynamically. If you install Ollama *after* running setup, re-run `./thereallywow-setup.sh` to add the `02-ollama-serve.sh` boot script, or create it by hand in `~/.termux/boot/`.
 
 ---
 

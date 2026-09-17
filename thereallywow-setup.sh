@@ -152,7 +152,24 @@ set +a
 adb connect "\${ADB_DEVICE:-localhost:5555}"
 BOOT
 
-  cat > "$BOOT_DIR/02-mcp-server.sh" <<BOOT
+  # If Ollama is installed, start it with a context window big enough for this
+  # project's 45-tool schema (~3.4k tokens alone — the compiled-in 4096 default
+  # leaves almost no room for actual conversation and gets silently truncated,
+  # since num_ctx/keep_alive aren't settable per-request through the OpenAI-
+  # compatible endpoint this server talks to) and keep it resident in RAM so a
+  # paused chat doesn't pay a full model reload off phone storage on the next message.
+  if command -v ollama &>/dev/null; then
+    cat > "$BOOT_DIR/02-ollama-serve.sh" <<BOOT
+#!/data/data/com.termux/files/usr/bin/bash
+sleep 5
+export OLLAMA_CONTEXT_LENGTH="\${OLLAMA_CONTEXT_LENGTH:-8192}"
+export OLLAMA_KEEP_ALIVE="\${OLLAMA_KEEP_ALIVE:-30m}"
+ollama serve >> "$SCRIPT_DIR/ollama.log" 2>&1 &
+BOOT
+    chmod +x "$BOOT_DIR/02-ollama-serve.sh"
+  fi
+
+  cat > "$BOOT_DIR/03-mcp-server.sh" <<BOOT
 #!/data/data/com.termux/files/usr/bin/bash
 sleep 10
 set -a
@@ -169,7 +186,7 @@ node "$SCRIPT_DIR/server.mjs" >> "$SCRIPT_DIR/server.log" 2>&1 &
 echo \$! > "$SCRIPT_DIR/server.pid"
 BOOT
 
-  cat > "$BOOT_DIR/03-tunnel.sh" <<BOOT
+  cat > "$BOOT_DIR/04-tunnel.sh" <<BOOT
 #!/data/data/com.termux/files/usr/bin/bash
 sleep 15
 set -a
@@ -181,8 +198,8 @@ bash "$SCRIPT_DIR/network/tunnel-start.sh" \
   >> "$SCRIPT_DIR/network/tunnel.log" 2>&1 &
 BOOT
 
-  chmod +x "$BOOT_DIR/01-adb-connect.sh" "$BOOT_DIR/02-mcp-server.sh" "$BOOT_DIR/03-tunnel.sh"
-  ok "Boot persistence installed (3 scripts)"
+  chmod +x "$BOOT_DIR/01-adb-connect.sh" "$BOOT_DIR/03-mcp-server.sh" "$BOOT_DIR/04-tunnel.sh"
+  ok "Boot persistence installed ($(command -v ollama &>/dev/null && echo 4 || echo 3) scripts)"
 fi
 
 # ── Install thereallywow command ───────────────────────────────────────────────
