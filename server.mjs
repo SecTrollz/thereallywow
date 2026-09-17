@@ -1161,7 +1161,7 @@ function suggest(btn){
   send();
 }
 
-function addMsg(role,text,actions,isErr){
+function addMsg(role,text,actions,isErr,viaLocal){
   var empty=document.getElementById('empty');
   if(empty)empty.remove();
   var wrap=document.getElementById('messages');
@@ -1169,7 +1169,7 @@ function addMsg(role,text,actions,isErr){
   div.className='msg '+role+(isErr?' err':'');
   var who=document.createElement('div');
   who.className='who';
-  who.textContent=role==='user'?'You':'Agnes';
+  who.textContent=role==='user'?'You':(viaLocal?'Agnes · local model':'Agnes');
   div.appendChild(who);
   if(text){
     var b=document.createElement('div');
@@ -1240,7 +1240,7 @@ function send(){
       addMsg('agent',j.error,j.actions||[],true);
     } else {
       chatHistory.push({role:'assistant',content:j.reply});
-      addMsg('agent',j.reply,j.actions||[]);
+      addMsg('agent',j.reply,j.actions||[],false,j.viaLocal);
     }
   }).catch(function(e){
     hideTyping();
@@ -1967,6 +1967,40 @@ function parseFallbackToolCalls(content) {
   return arr.map((c, i) => ({ id: `fallback_${i}`, function: { name: c.name, arguments: JSON.stringify(c.arguments || {}) } }));
 }
 
+// Runs the tool-calling round loop against one OpenAI-compatible endpoint. Mutates the
+// given `messages`/`actions` arrays in place (rather than working on copies) so that if
+// this throws partway through — e.g. the cloud API rate-limits on round 2 after already
+// running a tool call — whatever real progress was made survives and can be handed
+// straight to a fallback endpoint instead of being silently discarded and re-run.
+async function runChatCompletion(baseUrl, model, apiKey, messages, tools, actions) {
+  for (let round = 0; round < 12; round++) {
+    const r = await fetch(`${baseUrl}/chat/completions`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+      body: JSON.stringify({model, messages, tools, tool_choice:"auto", max_tokens:4096})
+    });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`${r.status}: ${txt.slice(0,300)}`);
+    }
+    const data = await r.json();
+    const msg = data.choices?.[0]?.message;
+    if (!msg) throw new Error("Empty response");
+    messages.push(msg);
+    const toolCalls = msg.tool_calls?.length ? msg.tool_calls : parseFallbackToolCalls(msg.content);
+    if (!toolCalls?.length) return msg.content || "";
+    for (const call of toolCalls) {
+      let result;
+      try {
+        result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}")));
+      } catch(e) { result = "Error: "+e.message; }
+      actions.push({tool:call.function.name, args:call.function.arguments, result});
+      messages.push({role:"tool", tool_call_id:call.id, content:result});
+    }
+  }
+  throw new Error("Too many tool rounds — may be looping");
+}
+
 async function executeTool(name, p) {
   switch(name) {
     case "get_ui_tree":       return uiTree(uiDump(p.force_refresh));
@@ -2186,7 +2220,9 @@ function startHttpServer(port = 3456) {
         stream:`/stream?fps=2`, viewer:`/`,
         tools:buildOpenAIToolList().length, version:"1.0.0",
         keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
-               agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"" },
+               agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"",
+               ollama_base_url:readEnvKey("OLLAMA_BASE_URL")||"http://127.0.0.1:11434/v1",
+               ollama_model:readEnvKey("OLLAMA_MODEL")||"qwen2.5:3b" },
         agnes:{
           local:`http://localhost:${PORT}`,
           mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
@@ -2201,7 +2237,7 @@ function startHttpServer(port = 3456) {
 
     if (url.pathname === "/api/setenv" && req.method === "POST") {
       if (!checkAuth(req, res, url)) return;
-      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL"];
+      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL", "OLLAMA_BASE_URL", "OLLAMA_MODEL"];
       let key, value;
       try { ({key, value} = JSON.parse(body)); } catch {
         res.writeHead(400, {"Content-Type":"application/json"});
@@ -2303,50 +2339,41 @@ function startHttpServer(port = 3456) {
         res.writeHead(400, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error:"Expected {history:[...]}"}));
       }
-      const agnesKey = readEnvKey("AGNES_API_KEY");
-      if (!agnesKey) {
-        res.writeHead(400, {"Content-Type":"application/json"});
-        return res.end(JSON.stringify({error:"AGNES_API_KEY not set — add it in Settings"}));
-      }
-      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "https://apihub.agnes-ai.com/v1").replace(/\/+$/,"");
-      const model   = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
+      const cloudKey   = readEnvKey("AGNES_API_KEY");
+      const cloudUrl   = (readEnvKey("AGNES_BASE_URL") || "https://apihub.agnes-ai.com/v1").replace(/\/+$/,"");
+      const cloudModel = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
+      const localUrl   = (readEnvKey("OLLAMA_BASE_URL") || "http://127.0.0.1:11434/v1").replace(/\/+$/,"");
+      const localModel = readEnvKey("OLLAMA_MODEL") || "qwen2.5:3b";
       const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
       const tools = buildOpenAIToolList();
       const actions = [];
+
+      // Cloud Agnes AI is tried first when a key is configured. Any failure — out of
+      // API calls (429), network refused/blocked, wrong/expired key, DNS failure, cloud
+      // outage — falls through to a local Ollama instance automatically, no user action
+      // needed. `messages`/`actions` are shared, so if the cloud got partway through a
+      // multi-step tool call before failing, the fallback picks up from there instead of
+      // re-running device actions that already happened.
+      let cloudError = cloudKey ? null : new Error("AGNES_API_KEY not set");
+      if (cloudKey) {
+        try {
+          const reply = await runChatCompletion(cloudUrl, cloudModel, cloudKey, messages, tools, actions);
+          res.writeHead(200, {"Content-Type":"application/json"});
+          return res.end(JSON.stringify({reply, actions}));
+        } catch(e) { cloudError = e; }
+      }
+
       try {
-        for (let round = 0; round < 12; round++) {
-          const r = await fetch(`${baseUrl}/chat/completions`, {
-            method:"POST",
-            headers:{"Content-Type":"application/json","Authorization":`Bearer ${agnesKey}`},
-            body: JSON.stringify({model, messages, tools, tool_choice:"auto", max_tokens:4096})
-          });
-          if (!r.ok) {
-            const txt = await r.text();
-            throw new Error(`Agnes API ${r.status}: ${txt.slice(0,300)}`);
-          }
-          const data = await r.json();
-          const msg = data.choices?.[0]?.message;
-          if (!msg) throw new Error("Empty response from Agnes");
-          messages.push(msg);
-          const toolCalls = msg.tool_calls?.length ? msg.tool_calls : parseFallbackToolCalls(msg.content);
-          if (!toolCalls?.length) {
-            res.writeHead(200, {"Content-Type":"application/json"});
-            return res.end(JSON.stringify({reply: msg.content || "", actions}));
-          }
-          for (const call of toolCalls) {
-            let result;
-            try {
-              result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}")));
-            } catch(e) { result = "Error: "+e.message; }
-            actions.push({tool:call.function.name, args:call.function.arguments, result});
-            messages.push({role:"tool", tool_call_id:call.id, content:result});
-          }
-        }
-        throw new Error("Too many tool rounds — Agnes may be looping");
-      } catch(e) {
-        res.writeHead(500, {"Content-Type":"application/json"});
-        return res.end(JSON.stringify({error:e.message, actions}));
+        const reply = await runChatCompletion(localUrl, localModel, "ollama", messages, tools, actions);
+        res.writeHead(200, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({reply, actions, viaLocal:true, cloudError: cloudError.message}));
+      } catch(localError) {
+        res.writeHead(502, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({
+          error: `Agnes cloud unavailable (${cloudError.message}) and local Ollama fallback also failed (${localError.message}). Add a cloud key in Settings, or run "ollama serve" and "ollama pull ${localModel}" for offline use.`,
+          actions,
+        }));
       }
     }
 

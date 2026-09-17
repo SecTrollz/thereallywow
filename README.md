@@ -114,9 +114,20 @@ Open `http://localhost:3456/chat` for the Agnes AI chat interface.
 
 The `/chat` page talks directly to an OpenAI-compatible `/chat/completions` endpoint and loops tool calls automatically. By default that's the cloud service at `apihub.agnes-ai.com` — open `http://localhost:3456/chat`, click **⚙ Settings**, and paste a free API key from there.
 
+### Automatic local fallback (no setup needed)
+
+Every `/api/chat` request tries the cloud key first, and **falls back to a local Ollama instance automatically** — no error shown, no user action needed — whenever the cloud call fails for any reason:
+
+- `AGNES_API_KEY` isn't set at all
+- the cloud is rate-limited (429, "out of API calls")
+- the key is wrong/expired, or the account is blocked
+- the request is blocked by a firewall/proxy, or the cloud is just unreachable
+
+It tries `http://127.0.0.1:11434/v1` with `qwen2.5:3b` by default — if Ollama happens to be running locally (see below) with that model pulled, chat keeps working with zero configuration. If the tool call had already run partway against the cloud before it failed, the fallback picks up from there instead of re-running device actions that already happened. Only if *both* the cloud and the local fallback fail do you see an error, naming both problems. When the fallback answers, the chat UI labels it "Agnes · local model" so you know which one responded. Override the fallback target with `OLLAMA_BASE_URL` / `OLLAMA_MODEL` in `.env` if you're running a different model or port.
+
 ### Running fully offline (Ollama, no cloud, no rate limits)
 
-The chat endpoint is just OpenAI-compatible HTTP, so it works unmodified against a local [Ollama](https://ollama.com) instance — including one running **on the device itself** via Termux, for a fully offline setup with no API key and no rate limits.
+The chat endpoint is just OpenAI-compatible HTTP, so it works unmodified against a local [Ollama](https://ollama.com) instance — including one running **on the device itself** via Termux, for a fully offline setup with no API key and no rate limits. Pulling a model here is also what makes the automatic fallback above work.
 
 ```bash
 pkg install ollama        # or: curl -fsSL https://ollama.com/install.sh | sh
@@ -157,7 +168,7 @@ GET  /screenshot.png         live screenshot
 GET  /api/info               device status, mesh IP, tunnel URL, Agnes endpoints
 GET  /api/openclaw-config    one-paste OpenClaw MCP config JSON
 POST /api/chat               Agnes chat proxy (loops tool calls automatically)
-POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL
+POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL, OLLAMA_BASE_URL, OLLAMA_MODEL
 POST /reconnect              { "device": "IP:PORT" }  live-switch ADB target
 GET  /health                 server health + tool count
 GET  /                       web control panel
@@ -325,6 +336,8 @@ All values are read from `.env` in the project root. The setup script generates 
 | `AGNES_API_KEY` | *(none)* | API key for the Agnes chat backend (any value works for local Ollama) |
 | `AGNES_BASE_URL` | `https://apihub.agnes-ai.com/v1` | OpenAI-compatible chat API base URL — point at `http://127.0.0.1:11434/v1` for local Ollama |
 | `AGNES_MODEL` | `agnes-2.0-flash` | Model identifier to send to the chat API |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Automatic local-fallback endpoint, used whenever the cloud call fails |
+| `OLLAMA_MODEL` | `qwen2.5:3b` | Automatic local-fallback model |
 | `TOUCH_DEV` | `/dev/input/event7` | sendevent input device path |
 | `BORE_HOST` | `bore.pub` | Bore relay host |
 
