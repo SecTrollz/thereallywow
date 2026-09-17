@@ -2370,8 +2370,8 @@ function startHttpServer(port = 3456) {
         res.writeHead(400, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error:"AGNES_API_KEY not set — add it in Settings"}));
       }
-      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "https://api.openai.com/v1").replace(/\/+$/,"");
-      const model   = readEnvKey("AGNES_MODEL") || "gpt-4o";
+      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "http://localhost:18789/v1").replace(/\/+$/,"");
+      const model   = readEnvKey("AGNES_MODEL") || "openclaw:main";
       const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
       const tools = buildOpenAIToolList();
