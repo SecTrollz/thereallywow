@@ -1047,11 +1047,14 @@ header{
 .modal-box h3 small{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:6px}
 .modal-box p{font-size:13px;color:var(--text-dim);line-height:1.55}
 .modal-box label{font-size:11px;color:var(--text-dim);display:block;margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
-.modal-box input,.modal-box textarea{background:var(--surface);color:var(--text);border:1px solid var(--border);
+.modal-box input,.modal-box textarea,.modal-box select{background:var(--surface);color:var(--text);border:1px solid var(--border);
   border-radius:var(--r-sm);font:inherit;font-size:13px;padding:8px 10px;width:100%}
-.modal-box input{height:42px;padding:0 10px}
+.modal-box input,.modal-box select{height:42px;padding:0 10px}
 .modal-box textarea{resize:none;font-family:'SF Mono','Cascadia Code',monospace;font-size:11px;line-height:1.5}
-.modal-box input:focus,.modal-box textarea:focus{outline:none;border-color:var(--border-focus);background:var(--surface-2)}
+.modal-box input:focus,.modal-box textarea:focus,.modal-box select:focus{outline:none;border-color:var(--border-focus);background:var(--surface-2)}
+.modal-box .hint-btn{width:100%;margin-top:2px;background:var(--surface);color:var(--accent);border:1px dashed rgba(99,179,237,.4);
+  border-radius:var(--r-sm);font:inherit;font-size:12px;padding:8px;cursor:pointer;transition:background .12s}
+.modal-box .hint-btn:hover{background:var(--accent-dim)}
 .modal-row{display:flex;gap:8px}
 .modal-row button{flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border);
   border-radius:var(--r-sm);font:inherit;font-size:13px;height:42px;cursor:pointer;transition:background .12s,color .12s}
@@ -1129,6 +1132,23 @@ header{
       <input id="cfg-key" type="password" placeholder="(set — paste to change)" autocomplete="new-password">
     </div>
     <p class="modal-note">Get a free key at <strong>apihub.agnes-ai.com</strong> — saved to .env, persists across restarts.</p>
+    <div>
+      <label>API Base URL</label>
+      <input id="cfg-url" type="url" placeholder="https://apihub.agnes-ai.com/v1" autocorrect="off" autocapitalize="off">
+    </div>
+    <div>
+      <label>Model</label>
+      <input id="cfg-model" type="text" placeholder="agnes-2.0-flash">
+    </div>
+    <div>
+      <label>Tool set</label>
+      <select id="cfg-tools">
+        <option value="full">Full (45 tools) — best for cloud models</option>
+        <option value="core">Core (16 tools) — best for small/local models</option>
+      </select>
+    </div>
+    <button class="hint-btn" onclick="fillOllama()">⚡ Use a local Ollama model instead</button>
+    <p class="modal-note">Runs fully offline on-device via <strong>Termux + Ollama</strong> (no cloud, no rate limits). No API key required — any value works. See README for setup.</p>
     <div class="modal-row">
       <button onclick="closeSettings()">Cancel</button>
       <button class="primary" onclick="saveSettings()">Save</button>
@@ -1138,7 +1158,7 @@ header{
 <script>
 var _auth=${apiKey ? JSON.stringify('Bearer '+apiKey) : 'null'};
 function _hdr(e){var h=e||{};if(_auth)h['Authorization']=_auth;return h;}
-var history=[];
+var chatHistory=[];
 var busy=false;
 
 function scrollBottom(){var m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
@@ -1176,7 +1196,7 @@ function addMsg(role,text,actions,isErr){
       hd.onclick=function(){el.classList.toggle('open');};
       var bd=document.createElement('div');
       bd.className='action-body';
-      bd.textContent=(a.args&&a.args!=='{}'?'Args: '+a.args+'\n':'')+'\u2192 '+a.result.slice(0,400);
+      bd.textContent=(a.args&&a.args!=='{}'?'Args: '+a.args+'\\n':'')+'\u2192 '+a.result.slice(0,400);
       el.appendChild(hd);el.appendChild(bd);
       ac.appendChild(el);
     });
@@ -1216,17 +1236,17 @@ function send(){
   inp.value='';inp.style.height='';
   busy=true;
   document.getElementById('send').disabled=true;
-  history.push({role:'user',content:text});
+  chatHistory.push({role:'user',content:text});
   addMsg('user',text);
   showTyping();
   fetch('/api/chat',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
-    body:JSON.stringify({history:history})
+    body:JSON.stringify({history:chatHistory})
   }).then(function(r){return r.json();}).then(function(j){
     hideTyping();
     if(j.error){
       addMsg('agent',j.error,j.actions||[],true);
     } else {
-      history.push({role:'assistant',content:j.reply});
+      chatHistory.push({role:'assistant',content:j.reply});
       addMsg('agent',j.reply,j.actions||[]);
     }
   }).catch(function(e){
@@ -1280,15 +1300,32 @@ fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(fun
 /* Settings modal */
 function openSettings(){
   fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'Paste Agnes API key…';
+    if(!d.keys)return;
+    document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'Paste Agnes API key…';
+    document.getElementById('cfg-url').value=d.keys.agnes_base_url||'';
+    document.getElementById('cfg-model').value=d.keys.agnes_model||'';
+    document.getElementById('cfg-tools').value=d.keys.agnes_tools||'full';
   }).catch(function(){});
   document.getElementById('modal').classList.add('show');
 }
 function closeSettings(){document.getElementById('modal').classList.remove('show');}
+function fillOllama(){
+  document.getElementById('cfg-key').value='ollama';
+  document.getElementById('cfg-url').value='http://127.0.0.1:11434/v1';
+  document.getElementById('cfg-model').value='qwen2.5:1.5b';
+  document.getElementById('cfg-tools').value='core';
+}
 function saveSettings(){
   var key=document.getElementById('cfg-key').value.trim();
-  if(!key){closeSettings();return;}
-  setEnv('AGNES_API_KEY',key).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
+  var url=document.getElementById('cfg-url').value.trim();
+  var model=document.getElementById('cfg-model').value.trim();
+  var tools=document.getElementById('cfg-tools').value;
+  var saves=[];
+  if(key)saves.push(setEnv('AGNES_API_KEY',key));
+  saves.push(setEnv('AGNES_BASE_URL',url));
+  saves.push(setEnv('AGNES_MODEL',model));
+  saves.push(setEnv('AGNES_TOOLS',tools==='full'?'':tools));
+  Promise.all(saves).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
 }
 document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeSettings();});
 </script>
@@ -1871,12 +1908,22 @@ function checkAuth(req, res, url) {
   return false;
 }
 
-function buildOpenAIToolList() {
+// Small/local models (see AGNES_TOOLS=core) pick tools far more reliably when the
+// list is trimmed to what a chat-driven "control the phone" request actually needs —
+// tool-selection accuracy degrades as the candidate list grows, and this repo's full
+// list is 45 tools deep, most of it gaming/multi-touch/network-capture specifics.
+const CORE_TOOL_NAMES = new Set([
+  "get_ui_tree","find_element","wait_for_element","wait_for_text","tap_by_text",
+  "tap_coords","swipe","scroll","type_text","keyevent","screenshot",
+  "launch_app","get_current_app","device_info","get_location","force_stop",
+]);
+
+function buildOpenAIToolList(profile = "full") {
   const T = (name, desc, props={}, req=[]) => ({ type:"function", function:{ name, description:desc, parameters:{type:"object",properties:props,required:req} } });
   const num = {type:"number"}, str = {type:"string"}, bool = {type:"boolean"};
   const point = {type:"object",properties:{x:num,y:num}};
   const action = {type:"object",properties:{type:str,x:num,y:num,x2:num,y2:num,duration:num,key:str,text:str,ms:num}};
-  return [
+  const all = [
     T("get_ui_tree",        "Read UI as text tree",           {force_refresh:bool}),
     T("find_element",       "Find element coords",            {text:str,partial_text:str,resource_id:str,description:str}),
     T("wait_for_element",   "Poll until element appears",     {text:str,partial_text:str,resource_id:str,description:str,timeout_ms:num,poll_ms:num}),
@@ -1923,6 +1970,23 @@ function buildOpenAIToolList() {
     T("wait_for_text",      "Wait until text appears",       {text:str,timeout_ms:num,poll_ms:num},["text"]),
     T("rotate_screen",      "Set screen rotation",           {rotation:str},["rotation"]),
   ];
+  return profile === "core" ? all.filter(t => CORE_TOOL_NAMES.has(t.function.name)) : all;
+}
+
+// Some tool-calling-specialist local models (e.g. Hammer2.1 via a hand-rolled Ollama
+// Modelfile) emit a bare `[{"name":...,"arguments":{...}}]` JSON array as plain message
+// content instead of populating the OpenAI `tool_calls` field — Ollama's generic
+// extractor only recognizes the more common <tool_call> tag convention. Recover the
+// calls from content so those models still work through the same execution loop.
+function parseFallbackToolCalls(content) {
+  if (typeof content !== "string") return null;
+  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fenced ? fenced[1] : content).trim();
+  if (!raw.startsWith("[")) return null;
+  let arr;
+  try { arr = JSON.parse(raw); } catch { return null; }
+  if (!Array.isArray(arr) || arr.length === 0 || !arr.every(c => c && typeof c.name === "string")) return null;
+  return arr.map((c, i) => ({ id: `fallback_${i}`, function: { name: c.name, arguments: JSON.stringify(c.arguments || {}) } }));
 }
 
 async function executeTool(name, p) {
@@ -2143,7 +2207,9 @@ function startHttpServer(port = 3456) {
         tunnel_url:tunnel,
         stream:`/stream?fps=2`, viewer:`/`,
         tools:buildOpenAIToolList().length, version:"1.0.0",
-        keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY") },
+        keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
+               agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"",
+               agnes_tools:(readEnvKey("AGNES_TOOLS")||"full").toLowerCase() },
         agnes:{
           local:`http://localhost:${PORT}`,
           mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
@@ -2158,7 +2224,7 @@ function startHttpServer(port = 3456) {
 
     if (url.pathname === "/api/setenv" && req.method === "POST") {
       if (!checkAuth(req, res, url)) return;
-      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL"];
+      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL", "AGNES_TOOLS"];
       let key, value;
       try { ({key, value} = JSON.parse(body)); } catch {
         res.writeHead(400, {"Content-Type":"application/json"});
@@ -2267,9 +2333,10 @@ function startHttpServer(port = 3456) {
       }
       const baseUrl = (readEnvKey("AGNES_BASE_URL") || "https://apihub.agnes-ai.com/v1").replace(/\/+$/,"");
       const model   = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
+      const toolProfile = (readEnvKey("AGNES_TOOLS") || "full").toLowerCase();
       const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
-      const tools = buildOpenAIToolList();
+      const tools = buildOpenAIToolList(toolProfile);
       const actions = [];
       try {
         for (let round = 0; round < 12; round++) {
@@ -2286,11 +2353,12 @@ function startHttpServer(port = 3456) {
           const msg = data.choices?.[0]?.message;
           if (!msg) throw new Error("Empty response from Agnes");
           messages.push(msg);
-          if (!msg.tool_calls?.length) {
+          const toolCalls = msg.tool_calls?.length ? msg.tool_calls : parseFallbackToolCalls(msg.content);
+          if (!toolCalls?.length) {
             res.writeHead(200, {"Content-Type":"application/json"});
             return res.end(JSON.stringify({reply: msg.content || "", actions}));
           }
-          for (const call of msg.tool_calls) {
+          for (const call of toolCalls) {
             let result;
             try {
               result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}")));

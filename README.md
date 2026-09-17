@@ -112,16 +112,37 @@ Open `http://localhost:3456/chat` for the Agnes AI chat interface.
 
 ## Agnes AI Chat
 
-The `/chat` page connects Agnes to your device via OpenClaw. First-time setup takes about 30 seconds:
+The `/chat` page talks directly to an OpenAI-compatible `/chat/completions` endpoint and loops tool calls automatically. By default that's the cloud service at `apihub.agnes-ai.com` — open `http://localhost:3456/chat`, click **⚙ Settings**, and paste a free API key from there.
 
-1. Install [OpenClaw](https://github.com/openclaw/openclaw) and start the gateway:
-   ```bash
-   openclaw gateway start
-   openclaw gateway keys create --name thereallywow
-   ```
-2. Open `http://localhost:3456/chat` and enter your gateway token
-3. Copy the MCP config JSON shown and paste it into OpenClaw's MCP settings
-4. Start chatting — Agnes can see your screen, tap, type, and control the device
+### Running fully offline (Ollama, no cloud, no rate limits)
+
+The chat endpoint is just OpenAI-compatible HTTP, so it works unmodified against a local [Ollama](https://ollama.com) instance — including one running **on the device itself** via Termux, for a fully offline setup with no API key and no rate limits.
+
+```bash
+pkg install ollama        # or: curl -fsSL https://ollama.com/install.sh | sh
+ollama serve &
+ollama pull qwen2.5:1.5b  # ~1GB — for the weakest phones (≲2GB free RAM)
+# or, if the phone can spare it — meaningfully more reliable at tool calling:
+ollama pull qwen2.5:3b    # ~2GB — recommended when ≥3GB free RAM is available
+```
+
+Then in the chat page's Settings, click **⚡ Use a local Ollama model instead** (or set these by hand):
+
+| Field | Value |
+|---|---|
+| API Base URL | `http://127.0.0.1:11434/v1` |
+| Model | `qwen2.5:1.5b` (or `qwen2.5:3b`) |
+| Tool set | **Core** |
+| API Key | anything — Ollama ignores it, e.g. `ollama` |
+
+**Why "Core" tool set matters:** this server exposes 45 tools, and small local models pick the wrong one (or hallucinate arguments) far more often as the candidate list grows — a well-documented effect on the Berkeley Function-Calling Leaderboard, and one reproduced directly against this server: `qwen2.5:1.5b` picked `get_location` for a battery question against the full 45-tool list, but correctly called `device_info` every time once the list was trimmed to the 16 tools a chat-driven "control the phone" request actually needs (`AGNES_TOOLS=core`) — and answered ~4x faster, since less of the prompt is spent describing unused tools.
+
+**Model choice — what we actually found testing this against the server, not just spec sheets:**
+- We looked hard for something fine-tuned *specifically* for function-calling rather than a generic chat model — [Hammer2.1](https://huggingface.co/MadeAgents/Hammer2.1-1.5b) is exactly that, and benchmarks ahead of much larger general models on BFCL. It doesn't ship Ollama tool support out of the box (a [known open issue](https://huggingface.co/eaddario/Hammer2.1-7b-GGUF/discussions/1)) — we built a custom `Modelfile` to fix that and confirmed real tool calls (`device_info`, correct empty-args) come through. But it turned out unusable *for this chat UI*: it's trained purely as a function router, so any turn that isn't a tool call — small talk, a follow-up explanation, a command it decides doesn't need a tool — comes back as literally `[]` instead of a sentence, and in our testing it also missed a plain "open Chrome" request outright. Great at the narrow BFCL task, not fit for a conversational control interface.
+- **`qwen2.5:1.5b`** (general instruct model, not tool-specialized) handled battery/status questions and chit-chat perfectly with the core tool set, but was inconsistent on multi-step app-launch commands (correct about half the time across repeated identical requests in our testing; the other half stalled with an empty reply). Fine for simple queries on very constrained hardware.
+- **`qwen2.5:3b`** was consistently reliable on the same commands (4/4 in repeated testing) and still runs on a mid-low-end phone. **Recommended whenever the device has the RAM for it.**
+
+The `/api/chat` handler also has a fallback parser for local models (like Hammer2.1's Modelfile above) that emit a raw `[{"name":...,"arguments":{...}}]` JSON array as plain text instead of populating the standard `tool_calls` field — useful if you experiment with other GGUF imports that hit the same Ollama template gap.
 
 ---
 
@@ -137,7 +158,7 @@ GET  /screenshot.png         live screenshot
 GET  /api/info               device status, mesh IP, tunnel URL, Agnes endpoints
 GET  /api/openclaw-config    one-paste OpenClaw MCP config JSON
 POST /api/chat               Agnes chat proxy (loops tool calls automatically)
-POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL
+POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL, AGNES_TOOLS
 POST /reconnect              { "device": "IP:PORT" }  live-switch ADB target
 GET  /health                 server health + tool count
 GET  /                       web control panel
@@ -302,9 +323,10 @@ All values are read from `.env` in the project root. The setup script generates 
 | `MCP_MODE` | `http` | `stdio` for MCP clients, `http` for browser |
 | `PORT` | `3456` | HTTP server port |
 | `MCP_API_KEY` | *(auto-generated)* | Bearer token for HTTP auth |
-| `AGNES_API_KEY` | *(none)* | OpenClaw gateway token for Agnes chat |
-| `AGNES_BASE_URL` | `http://localhost:18789/v1` | OpenClaw gateway base URL |
-| `AGNES_MODEL` | `openclaw:main` | Model identifier for Agnes |
+| `AGNES_API_KEY` | *(none)* | API key for the Agnes chat backend (any value works for local Ollama) |
+| `AGNES_BASE_URL` | `https://apihub.agnes-ai.com/v1` | OpenAI-compatible chat API base URL — point at `http://127.0.0.1:11434/v1` for local Ollama |
+| `AGNES_MODEL` | `agnes-2.0-flash` | Model identifier to send to the chat API |
+| `AGNES_TOOLS` | `full` | `full` (45 tools) or `core` (16 tools) — use `core` for small/local models, see [Agnes AI Chat](#agnes-ai-chat) |
 | `TOUCH_DEV` | `/dev/input/event7` | sendevent input device path |
 | `BORE_HOST` | `bore.pub` | Bore relay host |
 
