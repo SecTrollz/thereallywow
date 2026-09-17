@@ -1972,13 +1972,26 @@ function parseFallbackToolCalls(content) {
 // this throws partway through — e.g. the cloud API rate-limits on round 2 after already
 // running a tool call — whatever real progress was made survives and can be handed
 // straight to a fallback endpoint instead of being silently discarded and re-run.
-async function runChatCompletion(baseUrl, model, apiKey, messages, tools, actions) {
+// `timeoutMs` bounds each individual request: without it, a stalled backend (a cold
+// model load on weak hardware, Android Doze throttling a background Termux process, a
+// half-dead connection to a crashed server) hangs the whole /api/chat call forever with
+// no error — indistinguishable from the chat UI just spinning. A timeout turns that into
+// a clear error, which for the cloud attempt also means it fails over to the local
+// fallback promptly instead of blocking on a request that was never going to complete.
+async function runChatCompletion(baseUrl, model, apiKey, messages, tools, actions, timeoutMs) {
   for (let round = 0; round < 12; round++) {
-    const r = await fetch(`${baseUrl}/chat/completions`, {
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
-      body: JSON.stringify({model, messages, tools, tool_choice:"auto", max_tokens:4096})
-    });
+    let r;
+    try {
+      r = await fetch(`${baseUrl}/chat/completions`, {
+        method:"POST",
+        headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+        body: JSON.stringify({model, messages, tools, tool_choice:"auto", max_tokens:4096}),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch(e) {
+      if (e.name === "TimeoutError" || e.name === "AbortError") throw new Error(`timed out after ${Math.round(timeoutMs/1000)}s waiting for ${baseUrl}`);
+      throw new Error(`${baseUrl} unreachable: ${e.message}`);
+    }
     if (!r.ok) {
       const txt = await r.text();
       throw new Error(`${r.status}: ${txt.slice(0,300)}`);
@@ -2237,7 +2250,7 @@ function startHttpServer(port = 3456) {
 
     if (url.pathname === "/api/setenv" && req.method === "POST") {
       if (!checkAuth(req, res, url)) return;
-      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL", "OLLAMA_BASE_URL", "OLLAMA_MODEL"];
+      const ALLOWED_KEYS = ["MCP_API_KEY", "AGNES_API_KEY", "AGNES_BASE_URL", "AGNES_MODEL", "OLLAMA_BASE_URL", "OLLAMA_MODEL", "AGNES_TIMEOUT_MS", "OLLAMA_TIMEOUT_MS"];
       let key, value;
       try { ({key, value} = JSON.parse(body)); } catch {
         res.writeHead(400, {"Content-Type":"application/json"});
@@ -2344,6 +2357,11 @@ function startHttpServer(port = 3456) {
       const cloudModel = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
       const localUrl   = (readEnvKey("OLLAMA_BASE_URL") || "http://127.0.0.1:11434/v1").replace(/\/+$/,"");
       const localModel = readEnvKey("OLLAMA_MODEL") || "qwen2.5:3b";
+      // Local inference on weak/throttled hardware (cold model load, Android Doze
+      // deprioritizing a background Termux process) can legitimately take a while, so it
+      // gets a much longer budget than the cloud call before being treated as unreachable.
+      const cloudTimeoutMs = parseInt(readEnvKey("AGNES_TIMEOUT_MS"))  || 45000;
+      const localTimeoutMs = parseInt(readEnvKey("OLLAMA_TIMEOUT_MS")) || 180000;
       const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
       const tools = buildOpenAIToolList();
@@ -2358,14 +2376,14 @@ function startHttpServer(port = 3456) {
       let cloudError = cloudKey ? null : new Error("AGNES_API_KEY not set");
       if (cloudKey) {
         try {
-          const reply = await runChatCompletion(cloudUrl, cloudModel, cloudKey, messages, tools, actions);
+          const reply = await runChatCompletion(cloudUrl, cloudModel, cloudKey, messages, tools, actions, cloudTimeoutMs);
           res.writeHead(200, {"Content-Type":"application/json"});
           return res.end(JSON.stringify({reply, actions}));
         } catch(e) { cloudError = e; }
       }
 
       try {
-        const reply = await runChatCompletion(localUrl, localModel, "ollama", messages, tools, actions);
+        const reply = await runChatCompletion(localUrl, localModel, "ollama", messages, tools, actions, localTimeoutMs);
         res.writeHead(200, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({reply, actions, viaLocal:true, cloudError: cloudError.message}));
       } catch(localError) {
