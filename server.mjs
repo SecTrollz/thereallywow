@@ -1138,7 +1138,7 @@ header{
 <script>
 var _auth=${apiKey ? JSON.stringify('Bearer '+apiKey) : 'null'};
 function _hdr(e){var h=e||{};if(_auth)h['Authorization']=_auth;return h;}
-var history=[];
+var chatHistory=[];
 var busy=false;
 
 function scrollBottom(){var m=document.getElementById('messages');m.scrollTop=m.scrollHeight;}
@@ -1176,7 +1176,7 @@ function addMsg(role,text,actions,isErr){
       hd.onclick=function(){el.classList.toggle('open');};
       var bd=document.createElement('div');
       bd.className='action-body';
-      bd.textContent=(a.args&&a.args!=='{}'?'Args: '+a.args+'\n':'')+'\u2192 '+a.result.slice(0,400);
+      bd.textContent=(a.args&&a.args!=='{}'?'Args: '+a.args+'\\n':'')+'\u2192 '+a.result.slice(0,400);
       el.appendChild(hd);el.appendChild(bd);
       ac.appendChild(el);
     });
@@ -1216,17 +1216,17 @@ function send(){
   inp.value='';inp.style.height='';
   busy=true;
   document.getElementById('send').disabled=true;
-  history.push({role:'user',content:text});
+  chatHistory.push({role:'user',content:text});
   addMsg('user',text);
   showTyping();
   fetch('/api/chat',{method:'POST',headers:_hdr({'Content-Type':'application/json'}),
-    body:JSON.stringify({history:history})
+    body:JSON.stringify({history:chatHistory})
   }).then(function(r){return r.json();}).then(function(j){
     hideTyping();
     if(j.error){
       addMsg('agent',j.error,j.actions||[],true);
     } else {
-      history.push({role:'assistant',content:j.reply});
+      chatHistory.push({role:'assistant',content:j.reply});
       addMsg('agent',j.reply,j.actions||[]);
     }
   }).catch(function(e){
