@@ -125,6 +125,8 @@ Every `/api/chat` request tries the cloud key first, and **falls back to a local
 
 It tries `http://127.0.0.1:11434/v1` with `qwen2.5:3b` by default — if Ollama happens to be running locally (see below) with that model pulled, chat keeps working with zero configuration. If the tool call had already run partway against the cloud before it failed, the fallback picks up from there instead of re-running device actions that already happened. Only if *both* the cloud and the local fallback fail do you see an error, naming both problems. When the fallback answers, the chat UI labels it "Agnes · local model" so you know which one responded. Override the fallback target with `OLLAMA_BASE_URL` / `OLLAMA_MODEL` in `.env` if you're running a different model or port.
 
+Every request to either endpoint is time-bounded (`AGNES_TIMEOUT_MS` / `OLLAMA_TIMEOUT_MS`, see below) — without that, a stalled backend (Ollama still cold-loading a model on a weak phone, Android's Doze mode throttling a backgrounded Termux process, a half-dead connection to a crashed server) would hang the whole chat request forever with no error, indistinguishable from the UI just not responding. A timeout turns that into a clear message instead.
+
 ### Running fully offline (Ollama, no cloud, no rate limits)
 
 The chat endpoint is just OpenAI-compatible HTTP, so it works unmodified against a local [Ollama](https://ollama.com) instance — including one running **on the device itself** via Termux, for a fully offline setup with no API key and no rate limits. Pulling a model here is also what makes the automatic fallback above work.
@@ -168,7 +170,7 @@ GET  /screenshot.png         live screenshot
 GET  /api/info               device status, mesh IP, tunnel URL, Agnes endpoints
 GET  /api/openclaw-config    one-paste OpenClaw MCP config JSON
 POST /api/chat               Agnes chat proxy (loops tool calls automatically)
-POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL, OLLAMA_BASE_URL, OLLAMA_MODEL
+POST /api/setenv             update AGNES_API_KEY, MCP_API_KEY, AGNES_BASE_URL, AGNES_MODEL, OLLAMA_BASE_URL, OLLAMA_MODEL, AGNES_TIMEOUT_MS, OLLAMA_TIMEOUT_MS
 POST /reconnect              { "device": "IP:PORT" }  live-switch ADB target
 GET  /health                 server health + tool count
 GET  /                       web control panel
@@ -338,6 +340,8 @@ All values are read from `.env` in the project root. The setup script generates 
 | `AGNES_MODEL` | `agnes-2.0-flash` | Model identifier to send to the chat API |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434/v1` | Automatic local-fallback endpoint, used whenever the cloud call fails |
 | `OLLAMA_MODEL` | `qwen2.5:3b` | Automatic local-fallback model |
+| `AGNES_TIMEOUT_MS` | `45000` | Max wait for the cloud call before treating it as failed and trying the fallback |
+| `OLLAMA_TIMEOUT_MS` | `180000` | Max wait for the local fallback — generous by default since a cold model load on a weak/throttled phone can genuinely take minutes |
 | `TOUCH_DEV` | `/dev/input/event7` | sendevent input device path |
 | `BORE_HOST` | `bore.pub` | Bore relay host |
 
