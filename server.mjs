@@ -1102,56 +1102,19 @@ header{
 <!-- Onboarding wizard -->
 <div id="onboard" class="overlay">
   <div class="modal-box">
-    <div class="step-dots"><span id="d0" class="active"></span><span id="d1"></span><span id="d2"></span></div>
 
-    <!-- Step 0: Enter OpenClaw key -->
+    <!-- Step 0: Enter Agnes API key -->
     <div id="step0">
-      <h3>Connect Agnes <small>Step 1 of 3</small></h3>
-      <p>Agnes runs inside OpenClaw. Generate a gateway token in OpenClaw, then paste it below.</p>
-      <p class="modal-note" style="margin-top:-8px">In OpenClaw: run <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px">openclaw gateway keys create --name thereallywow</code> to get your token.</p>
+      <h3>Connect Agnes AI</h3>
+      <p>Enter your Agnes AI API key to start controlling the device with AI.</p>
+      <p class="modal-note">Get a free key at <strong>apihub.agnes-ai.com</strong></p>
       <div>
-        <label>OpenClaw Gateway Token</label>
-        <input id="ob-key" type="password" placeholder="Paste gateway token here…" autocomplete="new-password">
+        <label>Agnes API Key</label>
+        <input id="ob-key" type="password" placeholder="Paste your Agnes API key…" autocomplete="new-password">
       </div>
-      <div>
-        <label>OpenClaw Gateway URL</label>
-        <input id="ob-url" type="url" value="http://localhost:18789/v1" autocorrect="off" autocapitalize="off">
-      </div>
-      <div>
-        <label>Model / Agent ID</label>
-        <input id="ob-model" type="text" value="openclaw:main" placeholder="openclaw:main">
-      </div>
-      <p class="modal-note">Token saved to .env on this device only. Get OpenClaw free at <strong>github.com/openclaw/openclaw</strong></p>
-      <div class="modal-row">
-        <button onclick="closeOnboard()">Skip for now</button>
-        <button class="primary" onclick="onboardStep1()">Continue</button>
-      </div>
-    </div>
-
-    <!-- Step 1: Enable gateway + copy MCP config -->
-    <div id="step1" style="display:none">
-      <h3>Add this server to OpenClaw <small>Step 2 of 3</small></h3>
-      <p>First, enable the OpenClaw gateway endpoint if not already on:</p>
-      <pre style="background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:10px;overflow-x:auto;margin-bottom:8px">{"gateway":{"http":{"endpoints":{"chatCompletions":{"enabled":true}}}}}</pre>
-      <p>Then copy this MCP config into OpenClaw: <strong>Settings → MCP Servers → Add</strong></p>
-      <div class="copy-row">
-        <textarea id="ob-config" rows="5" readonly></textarea>
-        <button onclick="copyConfig()" id="copybtn">Copy</button>
-      </div>
-      <p class="modal-note">Once added, OpenClaw restarts the MCP connection automatically.</p>
-      <div class="modal-row">
-        <button onclick="onboardBack()">Back</button>
-        <button class="primary" onclick="onboardStep2()">Done</button>
-      </div>
-    </div>
-
-    <!-- Step 2: All set -->
-    <div id="step2" style="display:none">
-      <h3>You're all set</h3>
-      <p><span class="check">&#10003;</span> Agnes is connected and ready to control the device.</p>
-      <p style="margin-top:4px">Try asking Agnes to take a screenshot, open an app, or describe what's on screen.</p>
-      <div class="modal-row">
-        <button class="primary" onclick="closeOnboard()">Start chatting</button>
+      <div class="modal-row" style="margin-top:4px">
+        <button onclick="closeOnboard()">Cancel</button>
+        <button class="primary" onclick="onboardStep1()">Save &amp; Chat</button>
       </div>
     </div>
   </div>
@@ -1162,25 +1125,10 @@ header{
   <div class="modal-box">
     <h3>Agnes Settings</h3>
     <div>
-      <label>OpenClaw Gateway URL</label>
-      <input id="cfg-url" type="url" placeholder="http://localhost:18789/v1">
-    </div>
-    <div>
-      <label>Gateway Token</label>
+      <label>Agnes API Key</label>
       <input id="cfg-key" type="password" placeholder="(set — paste to change)" autocomplete="new-password">
     </div>
-    <div>
-      <label>Model / Agent ID</label>
-      <input id="cfg-model" type="text" placeholder="openclaw:main">
-    </div>
-    <div>
-      <label>Server config for OpenClaw</label>
-      <div class="copy-row">
-        <textarea id="cfg-config" rows="4" readonly></textarea>
-        <button onclick="copyConfig2()" id="copybtn2">Copy</button>
-      </div>
-    </div>
-    <p class="modal-note">Saved to .env on device. Persists across restarts.</p>
+    <p class="modal-note">Get a free key at <strong>apihub.agnes-ai.com</strong> — saved to .env, persists across restarts.</p>
     <div class="modal-row">
       <button onclick="closeSettings()">Cancel</button>
       <button class="primary" onclick="saveSettings()">Save</button>
@@ -1302,60 +1250,15 @@ function setEnv(k,v){
   }).then(function(r){return r.json();}).then(function(j){if(!j.ok)throw new Error(j.error);});
 }
 
-function loadConfig(targetEl){
-  fetch('/api/openclaw-config',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-    var el=document.getElementById(targetEl);
-    if(el)el.value=JSON.stringify({mcpServers:d.mcpServers},null,2);
-  }).catch(function(){});
-}
-function copyConfig(){
-  var t=document.getElementById('ob-config');
-  navigator.clipboard.writeText(t.value).then(function(){
-    var b=document.getElementById('copybtn');b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},2000);
-  }).catch(function(){t.select();document.execCommand('copy');});
-}
-function copyConfig2(){
-  var t=document.getElementById('cfg-config');
-  navigator.clipboard.writeText(t.value).then(function(){
-    var b=document.getElementById('copybtn2');b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},2000);
-  }).catch(function(){t.select();document.execCommand('copy');});
-}
-
 /* Onboarding wizard */
-function showOnboard(){
-  loadConfig('ob-config');
-  setDot(0);
-  ['step0','step1','step2'].forEach(function(s,i){document.getElementById(s).style.display=i===0?'':'none';});
-  document.getElementById('onboard').classList.add('show');
-}
+function showOnboard(){document.getElementById('onboard').classList.add('show');}
 function closeOnboard(){document.getElementById('onboard').classList.remove('show');}
-function setDot(n){
-  for(var i=0;i<3;i++)document.getElementById('d'+i).className=i===n?'active':'';
-}
 function onboardStep1(){
   var key=document.getElementById('ob-key').value.trim();
-  var url=document.getElementById('ob-url').value.trim();
-  var model=document.getElementById('ob-model').value.trim();
   if(!key){document.getElementById('ob-key').focus();return;}
-  var saves=[setEnv('AGNES_API_KEY',key)];
-  if(url)saves.push(setEnv('AGNES_BASE_URL',url));
-  if(model)saves.push(setEnv('AGNES_MODEL',model));
-  Promise.all(saves).then(function(){
-    document.getElementById('step0').style.display='none';
-    document.getElementById('step1').style.display='';
-    setDot(1);
-    loadConfig('ob-config');
+  setEnv('AGNES_API_KEY',key).then(function(){
+    closeOnboard();
   }).catch(function(e){alert('Could not save: '+e.message);});
-}
-function onboardBack(){
-  document.getElementById('step1').style.display='none';
-  document.getElementById('step0').style.display='';
-  setDot(0);
-}
-function onboardStep2(){
-  document.getElementById('step1').style.display='none';
-  document.getElementById('step2').style.display='';
-  setDot(2);
 }
 document.getElementById('onboard').addEventListener('click',function(e){if(e.target===this)closeOnboard();});
 
@@ -1377,26 +1280,15 @@ fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(fun
 /* Settings modal */
 function openSettings(){
   fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(function(d){
-    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'OpenClaw gateway token';
+    if(d.keys)document.getElementById('cfg-key').placeholder=d.keys.agnes_key_set?'(set — paste to change)':'Paste Agnes API key…';
   }).catch(function(){});
-  var urlEl=document.getElementById('cfg-url');
-  if(!urlEl.value)urlEl.placeholder='http://localhost:18789/v1';
-  var modelEl=document.getElementById('cfg-model');
-  if(!modelEl.value)modelEl.placeholder='openclaw:main';
   document.getElementById('modal').classList.add('show');
-  loadConfig('cfg-config');
 }
 function closeSettings(){document.getElementById('modal').classList.remove('show');}
 function saveSettings(){
-  var url=document.getElementById('cfg-url').value.trim();
   var key=document.getElementById('cfg-key').value.trim();
-  var model=document.getElementById('cfg-model').value.trim();
-  var saves=[];
-  if(key)saves.push(setEnv('AGNES_API_KEY',key));
-  if(url)saves.push(setEnv('AGNES_BASE_URL',url));
-  if(model)saves.push(setEnv('AGNES_MODEL',model));
-  if(!saves.length){closeSettings();return;}
-  Promise.all(saves).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
+  if(!key){closeSettings();return;}
+  setEnv('AGNES_API_KEY',key).then(function(){closeSettings();}).catch(function(e){alert('Save failed: '+e.message);});
 }
 document.getElementById('modal').addEventListener('click',function(e){if(e.target===this)closeSettings();});
 </script>
@@ -2370,8 +2262,8 @@ function startHttpServer(port = 3456) {
         res.writeHead(400, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error:"AGNES_API_KEY not set — add it in Settings"}));
       }
-      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "http://localhost:18789/v1").replace(/\/+$/,"");
-      const model   = readEnvKey("AGNES_MODEL") || "openclaw:main";
+      const baseUrl = (readEnvKey("AGNES_BASE_URL") || "https://apihub.agnes-ai.com/v1").replace(/\/+$/,"");
+      const model   = readEnvKey("AGNES_MODEL") || "agnes-2.0-flash";
       const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
       const tools = buildOpenAIToolList();
