@@ -31,6 +31,7 @@ mkdir -p "$PEERS_DIR"
 
 if [ "${1:-}" = "--qr-config" ] || [ "${1:-}" = "--android" ]; then
   NAME="${2:-android-device}"
+  [[ "$NAME" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "Invalid device name (letters, numbers, - or _ only)"; exit 1; }
   # Generate a keypair for the new device
   NEW_PRIV=$(wg genkey)
   NEW_PUB=$(echo "$NEW_PRIV" | wg pubkey)
@@ -129,6 +130,7 @@ if [ -z "$PEER_PUB" ]; then
 fi
 
 [ -z "$PEER_PUB" ] && { warn "No public key provided"; exit 1; }
+[[ "$PEER_PUB" =~ ^[A-Za-z0-9+/]{43}=$ ]] || { warn "Invalid public key format"; exit 1; }
 
 # Assign mesh IP
 OCTET=$(python3 -c "import base64,hashlib; b=base64.b64decode('$PEER_PUB'); print(int.from_bytes(hashlib.sha256(b).digest()[:2],'big') % 250 + 2)")

@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "start:http": "MCP_MODE=http PORT=3456 node server.mjs"
+    "start:http": "MCP_MODE=http PORT=3456 node server.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "keywords": ["android", "adb", "mcp", "agnes", "openclaw", "automation", "gaming", "root", "termux"],
   "license": "MIT",

@@ -68,7 +68,7 @@ case "$MODE" in
   solo) MESH_IP="100.64.0.1" ;;
   spoke)
     # Derive a stable IP from the public key (deterministic)
-    OCTET=$(python3 -c "import base64,hashlib; b=base64.b64decode('$PUBKEY'); print(int.from_bytes(hashlib.sha256(b).digest()[:2],'big') % 250 + 2)")
+    OCTET=$(PUBKEY="$PUBKEY" python3 -c "import base64,hashlib,os; b=base64.b64decode(os.environ['PUBKEY']); print(int.from_bytes(hashlib.sha256(b).digest()[:2],'big') % 250 + 2)")
     MESH_IP="100.64.0.${OCTET}"
     ;;
 esac
