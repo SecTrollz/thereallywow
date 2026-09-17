@@ -1283,7 +1283,7 @@ fetch('/api/info',{headers:_hdr()}).then(function(r){return r.json();}).then(fun
       var banner=document.createElement('button');
       banner.className='suggestion';
       banner.style.cssText='background:rgba(99,179,237,.12);border-color:rgba(99,179,237,.4);color:var(--accent);margin-top:8px;font-weight:600';
-      banner.textContent='⚙ Connect Agnes AI (OpenClaw setup)';
+      banner.textContent='⚙ Connect Agnes AI';
       banner.onclick=function(){showOnboard();};
       empty.appendChild(banner);
     }
@@ -1563,7 +1563,7 @@ input::placeholder{color:var(--text-muted)}
     <div class="sec-body">
       <div style="font-size:9px;color:var(--ash-dim);margin-bottom:6px;letter-spacing:.4px">Values written to .env — never echoed back</div>
       <label style="font-size:9px;color:var(--ash-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Agnes API Key <span id="agnes-key-status"></span></label>
-      <input id="agnes-key-in" type="password" class="full" placeholder="OpenClaw gateway token" autocomplete="new-password">
+      <input id="agnes-key-in" type="password" class="full" placeholder="Paste your Agnes API key…" autocomplete="new-password">
       <div class="row" style="margin-bottom:8px">
         <button onclick="saveKey('AGNES_API_KEY','agnes-key-in','agnes-key-status')">Save</button>
         <button onclick="clearKey('AGNES_API_KEY','agnes-key-status')">Clear</button>
@@ -1575,9 +1575,31 @@ input::placeholder{color:var(--text-muted)}
         <button onclick="clearKey('MCP_API_KEY','server-key-status')">Clear</button>
       </div>
       <div style="font-size:9px;color:var(--text-muted);margin-top:5px;letter-spacing:.3px">Server key change requires restart</div>
-      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">OpenClaw Base URL</label>
-      <input id="url-in" type="url" class="full" placeholder="http://localhost:18789/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">Agnes Base URL</label>
+      <input id="url-in" type="url" class="full" placeholder="https://apihub.agnes-ai.com/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
       <button onclick="saveKey('AGNES_BASE_URL','url-in','')" class="full">Save URL</button>
+      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">Agnes Model</label>
+      <input id="model-in" type="text" class="full" placeholder="agnes-2.0-flash" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button onclick="saveKey('AGNES_MODEL','model-in','')" class="full">Save Model</button>
+      <div style="font-size:9px;color:var(--text-muted);margin-top:10px;letter-spacing:.4px">Local fallback (used automatically if the above fails)</div>
+      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">Ollama Base URL</label>
+      <input id="ollama-url-in" type="url" class="full" placeholder="http://127.0.0.1:11434/v1" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button onclick="saveKey('OLLAMA_BASE_URL','ollama-url-in','')" class="full">Save URL</button>
+      <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-top:8px;margin-bottom:3px">Ollama Model</label>
+      <input id="ollama-model-in" type="text" class="full" placeholder="qwen2.5:3b" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button onclick="saveKey('OLLAMA_MODEL','ollama-model-in','')" class="full">Save Model</button>
+      <div class="row" style="margin-top:8px">
+        <div style="flex:1">
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Cloud Timeout (ms)</label>
+          <input id="agnes-timeout-in" type="number" class="full" placeholder="45000">
+          <button onclick="saveKey('AGNES_TIMEOUT_MS','agnes-timeout-in','')" class="full">Save</button>
+        </div>
+        <div style="flex:1">
+          <label style="font-size:9px;color:var(--text-dim);letter-spacing:.5px;display:block;margin-bottom:3px">Local Timeout (ms)</label>
+          <input id="ollama-timeout-in" type="number" class="full" placeholder="180000">
+          <button onclick="saveKey('OLLAMA_TIMEOUT_MS','ollama-timeout-in','')" class="full">Save</button>
+        </div>
+      </div>
     </div>
   </div>
   <div class="sec collapsed" id="sec-ars">
@@ -1649,6 +1671,12 @@ _get('/api/info').then(function(r){return r.json();}).then(function(d){
   if(d.keys){
     setKeyStatus('agnes-key-status', d.keys.agnes_key_set);
     setKeyStatus('server-key-status', d.keys.server_key_set);
+    document.getElementById('url-in').value=d.keys.agnes_base_url||'';
+    document.getElementById('model-in').value=d.keys.agnes_model||'';
+    document.getElementById('ollama-url-in').value=d.keys.ollama_base_url||'';
+    document.getElementById('ollama-model-in').value=d.keys.ollama_model||'';
+    document.getElementById('agnes-timeout-in').value=d.keys.agnes_timeout_ms||'';
+    document.getElementById('ollama-timeout-in').value=d.keys.ollama_timeout_ms||'';
   }
 }).catch(function(){document.getElementById('devinfo').textContent='offline';});
 
@@ -2235,7 +2263,8 @@ function startHttpServer(port = 3456) {
         keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
                agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"",
                ollama_base_url:readEnvKey("OLLAMA_BASE_URL")||"http://127.0.0.1:11434/v1",
-               ollama_model:readEnvKey("OLLAMA_MODEL")||"qwen2.5:3b" },
+               ollama_model:readEnvKey("OLLAMA_MODEL")||"qwen2.5:3b",
+               agnes_timeout_ms:readEnvKey("AGNES_TIMEOUT_MS")||"", ollama_timeout_ms:readEnvKey("OLLAMA_TIMEOUT_MS")||"" },
         agnes:{
           local:`http://localhost:${PORT}`,
           mesh: MESH_IP ? `http://${MESH_IP}:${PORT}` : null,
@@ -2243,7 +2272,7 @@ function startHttpServer(port = 3456) {
           tools_path:`/tools`,
           execute_path:`/execute`,
           openai_compatible:true,
-          system_prompt:"You control a rooted Android device via 44 thereallywow tools. screenshot/stream to see screen. tap_coords/multi_touch/swipe for input. root_shell for root commands. All tool calls POST to /execute with {tool_name, parameters}."
+          system_prompt:"You control a rooted Android device via 45 thereallywow tools. screenshot/stream to see screen. tap_coords/multi_touch/swipe for input. root_shell for root commands. All tool calls POST to /execute with {tool_name, parameters}."
         }
       }));
     }
@@ -2341,7 +2370,7 @@ function startHttpServer(port = 3456) {
           chat: `GET /chat`,
           ...(API_KEY ? {api_key: API_KEY} : {})
         },
-        system_prompt: "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented."
+        system_prompt: "You control a rooted Android device via 45 thereallywow tools. Use screenshot to see the screen, tap_coords/multi_touch/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented."
       }, null, 2));
     }
 
@@ -2362,7 +2391,7 @@ function startHttpServer(port = 3456) {
       // gets a much longer budget than the cloud call before being treated as unreachable.
       const cloudTimeoutMs = parseInt(readEnvKey("AGNES_TIMEOUT_MS"))  || 45000;
       const localTimeoutMs = parseInt(readEnvKey("OLLAMA_TIMEOUT_MS")) || 180000;
-      const sysprompt = "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
+      const sysprompt = "You control a rooted Android device via 45 thereallywow tools. Use screenshot to see the screen, tap_coords/multi_touch/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented. When asked to do something on the device, just do it.";
       const messages = [{role:"system",content:sysprompt}, ...history];
       const tools = buildOpenAIToolList();
       const actions = [];

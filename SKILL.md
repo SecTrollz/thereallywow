@@ -1,6 +1,6 @@
 # thereallywow — Agnes AI Skill Reference
 
-Android device control via 44 tools over MCP (stdio) or HTTP (`/tools` + `/execute`).
+Android device control via 45 tools over MCP (stdio) or HTTP (`/tools` + `/execute`).
 Full tool schemas: `GET /tools` or `GET /api/info` for live endpoints.
 
 ---
@@ -11,7 +11,7 @@ Full tool schemas: `GET /tools` or `GET /api/info` for live endpoints.
 
 **HTTP (direct):**
 ```
-GET  /tools          → OpenAI function schema for all 44 tools
+GET  /tools          → OpenAI function schema for all 45 tools
 POST /execute        → { "tool_name": "...", "parameters": { ... } }
 GET  /api/info       → live endpoints, mesh IP, tunnel URL, this system prompt
 GET  /stream?fps=2   → MJPEG live feed
