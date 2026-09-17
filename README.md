@@ -1,6 +1,6 @@
 # thereallywow
 
-Android device control server — 45 tools over MCP and HTTP, with Agnes AI chat built in. Tap, swipe, type, read the screen, run root shell commands, stream live video, get GPS coordinates, and automate complex multi-touch gestures. Driven by Agnes AI via OpenClaw, with a web UI that works on mobile.
+Android device control server — 45 tools over MCP and HTTP, with Agnes AI chat built in. Tap, swipe, type, read the screen, run root shell commands, stream live video, get GPS coordinates, and automate complex multi-touch gestures. Driven by Agnes AI (cloud or local via Ollama), with a web UI that works on mobile.
 
 ```
 Control panel:  http://localhost:3456
@@ -300,6 +300,8 @@ bash network/relay-setup.sh   # run on the VPS
 ---
 
 ## OpenClaw / MCP Integration
+
+This is separate from — and optional alongside — the Agnes AI chat above: it lets OpenClaw, Claude Desktop, or any other MCP client use this server's 45 tools directly over stdio, instead of (or in addition to) using the `/chat` web UI.
 
 Get the auto-generated config from the server:
 
