@@ -13,3 +13,4 @@ network/tunnel.log
 network/tunnel.pid
 network/tunnel.url
 network/wireguard/
+logs/

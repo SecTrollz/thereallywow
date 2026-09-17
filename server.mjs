@@ -25,8 +25,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execSync, execFileSync, spawn } from "child_process";
-import { readFileSync, writeFileSync } from "fs";
-import { fileURLToPath } from "url";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, existsSync } from "fs";
+import { fileURLToPath, pathToFileURL } from "url";
 import { dirname, join } from "path";
 import http from "http";
 
@@ -48,7 +48,10 @@ function readEnvKey(key) {
 }
 
 let DEVICE         = process.env.ADB_DEVICE || "192.168.1.168:5556";
-const API_KEY      = process.env.MCP_API_KEY || null;
+// Hot-reloadable like AGNES_*/OLLAMA_* below: reads .env fresh on every call so a key
+// saved via /api/setenv takes effect immediately, with the boot-time env var as fallback
+// for a key that was never written to .env in the first place.
+function currentApiKey() { return readEnvKey("MCP_API_KEY") || process.env.MCP_API_KEY || null; }
 const TOUCH_DEV    = process.env.TOUCH_DEV || "/dev/input/event7";
 const MESH_IP      = process.env.WG_MESH_IP  || null;
 
@@ -82,6 +85,14 @@ function adbIsAlive() {
   return _adbAliveCache.ok;
 }
 
+// Every real ADB device identifier (IP:port, USB serial, emulator-NNNN) matches this;
+// only a value crafted to break out of a shell string does not. Validating it once here,
+// before it can ever be assigned to DEVICE, closes the injection for every call site that
+// interpolates DEVICE into a shell command.
+function isValidDeviceId(s) {
+  return typeof s === "string" && /^[A-Za-z0-9][A-Za-z0-9.:_-]{0,63}$/.test(s);
+}
+
 function adbReconnect(newDevice) {
   if (newDevice) DEVICE = newDevice;
   _adbAliveCache.at = 0; // invalidate cache so adbIsAlive re-checks after connect
@@ -96,10 +107,6 @@ function adbReconnect(newDevice) {
   process.stderr.write(`[thereallywow] ADB connect failed: ${DEVICE}\n`);
   return false;
 }
-
-// Reconnect once at startup, then check every 30s
-adbReconnect();
-setInterval(() => { if (!adbIsAlive()) adbReconnect(); }, 30000);
 
 // ── Persistent ADB shell ─────────────────────────────────────────────────────
 
@@ -164,8 +171,13 @@ function adb(cmd) {
 
 function adbRoot(cmd) { return adb(`su -c '${cmd.replace(/'/g, `'\\''`)}'`); }
 
-function adbExec(args) {
-  try { return execSync(`adb -s ${DEVICE} ${args}`, { encoding: "utf8", timeout: 30000 }).trim(); }
+// Single-quote-escapes a value for safe interpolation into a shell command string
+// (the `adb shell`/`su -c` string is parsed by the device's shell, so untrusted
+// values like package names or filter text must never be spliced in raw).
+function sq(v) { return `'${String(v).replace(/'/g, `'\\''`)}'`; }
+
+function adbExec(argv) {
+  try { return execFileSync("adb", ["-s", DEVICE, ...argv], { encoding: "utf8", timeout: 30000 }).trim(); }
   catch (e) { return (e.stderr || e.message || "").trim(); }
 }
 
@@ -385,14 +397,51 @@ async function pollUntil(predicate, timeoutMs, pollMs = 500) {
 const server = new McpServer({ name: "thereallywow", version: "1.0.0",
   description: "Full Android device control — UI, root, gaming input, multi-touch, network" });
 
+// One JSON line per tool call, recording what ran and whether it succeeded — a plain
+// paper trail across all three call surfaces (MCP, HTTP /execute, /api/chat), useful
+// after the fact for "what did the model actually do" without slowing anything down or
+// changing behavior on failure. Opt out with DISABLE_TOOL_AUDIT_LOG=1.
+function auditLog(toolName, source, ok) {
+  if (process.env.DISABLE_TOOL_AUDIT_LOG === "1") return;
+  try {
+    const __dir = dirname(fileURLToPath(import.meta.url));
+    const logsDir = join(__dir, "logs");
+    if (!existsSync(logsDir)) mkdirSync(logsDir, { recursive: true });
+    const line = JSON.stringify({ ts: new Date().toISOString(), tool: toolName, source, ok }) + "\n";
+    appendFileSync(join(logsDir, "tool-audit.jsonl"), line);
+  } catch {}
+}
+
+// Single source of truth for every tool definition. `tool()` registers with the MCP SDK
+// exactly as `server.tool()` always did (same name/description/shape/handler, so MCP
+// behavior is byte-identical) and additionally records the definition in `TOOLS`, which
+// `buildOpenAIToolList()` and `executeTool()` below both derive from. This is what keeps
+// the tool count and each tool's validation identical across the MCP, HTTP `/execute`,
+// and `/api/chat` surfaces — previously each surface hand-maintained its own copy, which
+// is how those copies drifted out of sync with each other.
+const TOOLS = {};
+function tool(name, description, shape, handler) {
+  TOOLS[name] = { name, description, shape, schema: z.object(shape), handler };
+  server.tool(name, description, shape, async (params) => {
+    try {
+      const result = await handler(params);
+      auditLog(name, "mcp", true);
+      return result;
+    } catch (e) {
+      auditLog(name, "mcp", false);
+      throw e;
+    }
+  });
+}
+
 // ── Navigation & UI tools ─────────────────────────────────────────────────────
 
-server.tool("get_ui_tree", "Read current screen UI as text tree. No image needed for navigation.",
+tool("get_ui_tree", "Read current screen UI as text tree. No image needed for navigation.",
   { force_refresh: z.boolean().default(false) },
   async ({ force_refresh }) => ({ content: [{ type:"text", text: uiTree(uiDump(force_refresh)) }] })
 );
 
-server.tool("find_element", "Find a UI element and return coordinates without tapping.",
+tool("find_element", "Find a UI element and return coordinates without tapping.",
   { text: z.string().optional(), partial_text: z.string().optional(),
     resource_id: z.string().optional(), description: z.string().optional() },
   async ({ text, partial_text, resource_id, description }) => {
@@ -402,7 +451,7 @@ server.tool("find_element", "Find a UI element and return coordinates without ta
   }
 );
 
-server.tool("wait_for_element",
+tool("wait_for_element",
   "Poll until a UI element appears (great for turn-based games waiting for opponent, loading screens, dialogs).",
   { text: z.string().optional(), partial_text: z.string().optional(),
     resource_id: z.string().optional(), description: z.string().optional(),
@@ -417,7 +466,7 @@ server.tool("wait_for_element",
   }
 );
 
-server.tool("tap_by_text", "Tap a UI element by visible text.",
+tool("tap_by_text", "Tap a UI element by visible text.",
   { text: z.string(), partial: z.boolean().default(false) },
   async ({ text, partial }) => {
     const el = findElement(uiDump(), partial ? { partialText:text } : { text });
@@ -429,17 +478,17 @@ server.tool("tap_by_text", "Tap a UI element by visible text.",
 
 // ── Basic input tools ─────────────────────────────────────────────────────────
 
-server.tool("tap_coords", "Tap specific pixel coordinates.",
+tool("tap_coords", "Tap specific pixel coordinates.",
   { x: z.number(), y: z.number() },
   async ({ x, y }) => { await tap(x, y); return { content: [{ type:"text", text:`Tapped (${x},${y})` }] }; }
 );
 
-server.tool("long_press", "Long press at coordinates.",
+tool("long_press", "Long press at coordinates.",
   { x: z.number(), y: z.number(), duration_ms: z.number().default(800) },
   async ({ x, y, duration_ms }) => { await longPress(x,y,duration_ms); return { content: [{ type:"text", text:`Long pressed (${x},${y}) ${duration_ms}ms` }] }; }
 );
 
-server.tool("swipe", "Swipe between two points.",
+tool("swipe", "Swipe between two points.",
   { x1:z.number(), y1:z.number(), x2:z.number(), y2:z.number(), duration_ms:z.number().default(300) },
   async ({ x1,y1,x2,y2,duration_ms }) => {
     await swipeCoords(x1,y1,x2,y2,duration_ms);
@@ -447,7 +496,7 @@ server.tool("swipe", "Swipe between two points.",
   }
 );
 
-server.tool("scroll", "Scroll in a direction.",
+tool("scroll", "Scroll in a direction.",
   { direction: z.enum(["up","down","left","right"]), amount: z.number().min(0.1).max(1.0).default(0.5) },
   async ({ direction, amount }) => {
     const xml = uiDump();
@@ -460,19 +509,19 @@ server.tool("scroll", "Scroll in a direction.",
   }
 );
 
-server.tool("type_text", "Type text into the focused field.",
+tool("type_text", "Type text into the focused field.",
   { text: z.string() },
   async ({ text }) => { await typeText(text); return { content: [{ type:"text", text:`Typed: ${text}` }] }; }
 );
 
-server.tool("keyevent", "Send Android key event (KEYCODE_BACK, KEYCODE_HOME, KEYCODE_ENTER, etc.).",
+tool("keyevent", "Send Android key event (KEYCODE_BACK, KEYCODE_HOME, KEYCODE_ENTER, etc.).",
   { key: z.string() },
   async ({ key }) => { await keyeventCmd(key); return { content: [{ type:"text", text:`Sent: ${key}` }] }; }
 );
 
 // ── Gaming: batch & repeat ────────────────────────────────────────────────────
 
-server.tool("batch_actions",
+tool("batch_actions",
   "Execute multiple actions in one ADB round-trip (~80ms/action saved). Best for turn-based sequences.",
   { actions: z.array(z.object({
       type:     z.enum(["tap","swipe","keyevent","type","sleep"]),
@@ -498,7 +547,7 @@ server.tool("batch_actions",
   }
 );
 
-server.tool("repeat",
+tool("repeat",
   "Repeat a batch_actions sequence N times with a delay between each iteration. Perfect for idle games, grinding, or repeated turn actions.",
   { actions: z.array(z.object({
       type:z.enum(["tap","swipe","keyevent","type","sleep"]),
@@ -538,7 +587,7 @@ server.tool("repeat",
 
 // ── Gaming: real-time input ───────────────────────────────────────────────────
 
-server.tool("rapid_tap",
+tool("rapid_tap",
   "Auto-clicker: tap rapidly at a position. For clicker games, spam attacks, or fast-paced tap mechanics.",
   { x: z.number(), y: z.number(),
     times:       z.number().min(1).max(500).default(10).describe("Number of taps"),
@@ -555,7 +604,7 @@ server.tool("rapid_tap",
   }
 );
 
-server.tool("joystick",
+tool("joystick",
   "Simulate analog joystick: hold finger at offset from center for duration. For movement in action/shooter/racing games.",
   { center_x:    z.number().describe("Virtual joystick center X"),
     center_y:    z.number().describe("Virtual joystick center Y"),
@@ -574,7 +623,7 @@ server.tool("joystick",
   }
 );
 
-server.tool("swipe_path",
+tool("swipe_path",
   "Swipe through multiple waypoints in sequence. For drawing, complex gestures, steering, or spell casting.",
   { points: z.array(z.object({ x:z.number(), y:z.number() })).min(2)
       .describe("Ordered list of (x,y) waypoints to pass through"),
@@ -611,7 +660,7 @@ server.tool("swipe_path",
   }
 );
 
-server.tool("multi_touch",
+tool("multi_touch",
   "Simultaneous multi-finger touch via low-level sendevent (requires root). For pinch/zoom, two-thumb controls, two-player touch, or any game needing multiple simultaneous fingers.",
   { touches: z.array(z.object({ x:z.number(), y:z.number() })).min(2).max(10)
       .describe("List of simultaneous touch positions (2-10 fingers)"),
@@ -625,7 +674,7 @@ server.tool("multi_touch",
   }
 );
 
-server.tool("hold_and_do",
+tool("hold_and_do",
   "Hold one finger steady while performing other taps elsewhere. Essential for games where you hold move/aim while tapping fire, or hold a button while swiping.",
   { hold: z.object({ x:z.number(), y:z.number() }).describe("Position to hold continuously"),
     actions: z.array(z.object({
@@ -653,7 +702,7 @@ server.tool("hold_and_do",
   }
 );
 
-server.tool("pinch",
+tool("pinch",
   "Pinch in or out (zoom gesture) between two finger positions.",
   { center_x: z.number(), center_y: z.number(),
     start_spread: z.number().default(300).describe("Initial finger distance in pixels"),
@@ -677,7 +726,7 @@ server.tool("pinch",
 
 // ── Gaming: vision / state detection ─────────────────────────────────────────
 
-server.tool("pixel_color",
+tool("pixel_color",
   "Read the color of a pixel at (x,y). Use to detect game state: HP bar color, button highlighted, cooldown ready, enemy visible.",
   { x: z.number(), y: z.number() },
   async ({ x, y }) => {
@@ -686,7 +735,7 @@ server.tool("pixel_color",
   }
 );
 
-server.tool("screen_region",
+tool("screen_region",
   "Capture a sub-rectangle of the screen as PNG. Much faster than full screenshot for monitoring a specific game element (HP bar, minimap, cooldown timer).",
   { x: z.number(), y: z.number(), width: z.number(), height: z.number() },
   async ({ x, y, width, height }) => {
@@ -695,7 +744,7 @@ server.tool("screen_region",
   }
 );
 
-server.tool("screenshot", "Take a full screenshot. Returns base64 PNG.",
+tool("screenshot", "Take a full screenshot. Returns base64 PNG.",
   {},
   async () => {
     const buf = takeScreenshot();
@@ -703,7 +752,7 @@ server.tool("screenshot", "Take a full screenshot. Returns base64 PNG.",
   }
 );
 
-server.tool("get_stream_url", "Get the live MJPEG screen stream URL.",
+tool("get_stream_url", "Get the live MJPEG screen stream URL.",
   { fps: z.number().min(1).max(10).default(2) },
   async ({ fps }) => {
     const port = parseInt(process.env.PORT || "3456");
@@ -713,7 +762,7 @@ server.tool("get_stream_url", "Get the live MJPEG screen stream URL.",
 
 // ── Performance ───────────────────────────────────────────────────────────────
 
-server.tool("set_perf_mode",
+tool("set_perf_mode",
   "Toggle high-performance CPU governor to reduce input latency for real-time games. Use 'performance' before gaming, 'balanced' when done.",
   { mode: z.enum(["performance","balanced","powersave"]) },
   async ({ mode }) => {
@@ -723,7 +772,7 @@ server.tool("set_perf_mode",
   }
 );
 
-server.tool("clipboard_set", "Copy text to device clipboard.",
+tool("clipboard_set", "Copy text to device clipboard.",
   { text: z.string() },
   async ({ text }) => {
     adbRoot(`am broadcast -a clipper.SET -e text '${text.replace(/'/g,`'\\''`)}' 2>/dev/null; true`);
@@ -733,44 +782,44 @@ server.tool("clipboard_set", "Copy text to device clipboard.",
 
 // ── File / App / System ───────────────────────────────────────────────────────
 
-server.tool("push_file", "Push local file to device.",
+tool("push_file", "Push local file to device.",
   { local_path:z.string(), device_path:z.string() },
-  async ({ local_path, device_path }) => ({ content: [{ type:"text", text: adbExec(`push "${local_path}" "${device_path}"`) }] })
+  async ({ local_path, device_path }) => ({ content: [{ type:"text", text: adbExec(["push", local_path, device_path]) }] })
 );
 
-server.tool("pull_file", "Pull file from device.",
+tool("pull_file", "Pull file from device.",
   { device_path:z.string(), local_path:z.string().optional() },
   async ({ device_path, local_path }) => {
     const d = local_path || "/data/data/com.termux/files/home/pulled_file";
-    return { content: [{ type:"text", text:`${adbExec(`pull "${device_path}" "${d}"`)}\nSaved: ${d}` }] };
+    return { content: [{ type:"text", text:`${adbExec(["pull", device_path, d])}\nSaved: ${d}` }] };
   }
 );
 
-server.tool("install_apk", "Install APK onto device.",
+tool("install_apk", "Install APK onto device.",
   { apk_path:z.string() },
-  async ({ apk_path }) => ({ content: [{ type:"text", text: adbExec(`install -r "${apk_path}"`) }] })
+  async ({ apk_path }) => ({ content: [{ type:"text", text: adbExec(["install", "-r", apk_path]) }] })
 );
 
-server.tool("launch_app", "Launch app by package name.",
+tool("launch_app", "Launch app by package name.",
   { package:z.string() },
   async ({ package: pkg }) => {
-    const out = adb(`monkey -p ${pkg} -c android.intent.category.LAUNCHER 1`);
+    const out = adb(`monkey -p ${sq(pkg)} -c android.intent.category.LAUNCHER 1`);
     invalidateUi();
     return { content: [{ type:"text", text: out }] };
   }
 );
 
-server.tool("root_shell", "Execute root shell command (Magisk su).",
+tool("root_shell", "Execute root shell command (Magisk su).",
   { command:z.string() },
   async ({ command }) => ({ content: [{ type:"text", text: adbRoot(command)||"(no output)" }] })
 );
 
-server.tool("list_packages", "List installed packages.",
+tool("list_packages", "List installed packages.",
   { filter:z.string().optional() },
-  async ({ filter }) => ({ content: [{ type:"text", text: adb(`pm list packages${filter?" -e "+filter:""}`) }] })
+  async ({ filter }) => ({ content: [{ type:"text", text: adb(`pm list packages${filter?" -e "+sq(filter):""}`) }] })
 );
 
-server.tool("get_current_app", "Get foreground app/activity.",
+tool("get_current_app", "Get foreground app/activity.",
   {},
   async () => {
     const out = execSync(`adb -s ${DEVICE} shell dumpsys activity activities`, { encoding:"utf8", timeout:10000 });
@@ -779,7 +828,7 @@ server.tool("get_current_app", "Get foreground app/activity.",
   }
 );
 
-server.tool("start_network_capture", "Start tcpdump packet capture.",
+tool("start_network_capture", "Start tcpdump packet capture.",
   { output:z.string().default("/sdcard/capture.pcap"), interface:z.string().default("any"), filter:z.string().default("") },
   async ({ output, interface:iface, filter }) => {
     const o=output.replace(/[^a-zA-Z0-9/_.-]/g,""), i=iface.replace(/[^a-zA-Z0-9_.-]/g,""), f=filter.replace(/[^a-zA-Z0-9 ._!&|()]/g,"");
@@ -788,22 +837,22 @@ server.tool("start_network_capture", "Start tcpdump packet capture.",
   }
 );
 
-server.tool("stop_network_capture", "Stop tcpdump and pull pcap.",
+tool("stop_network_capture", "Stop tcpdump and pull pcap.",
   { remote_path:z.string().default("/sdcard/capture.pcap") },
   async ({ remote_path }) => {
     adbRoot("pkill tcpdump");
     const local="/data/data/com.termux/files/home/capture.pcap";
-    execSync(`adb -s ${DEVICE} pull "${remote_path}" "${local}"`, { timeout:30000 });
+    adbExec(["pull", remote_path, local]);
     return { content: [{ type:"text", text:`Saved to ${local}` }] };
   }
 );
 
-server.tool("get_notifications", "Read current device notifications.",
+tool("get_notifications", "Read current device notifications.",
   {},
   async () => ({ content: [{ type:"text", text: adbRoot("dumpsys notification --noredact 2>/dev/null | grep -A3 NotificationRecord | head -60")||"(none)" }] })
 );
 
-server.tool("device_info", "Get device model, Android version, battery, serial.",
+tool("device_info", "Get device model, Android version, battery, serial.",
   {},
   async () => {
     const props=["ro.product.model","ro.product.manufacturer","ro.build.version.release","ro.build.version.sdk","ro.serialno"];
@@ -814,7 +863,7 @@ server.tool("device_info", "Get device model, Android version, battery, serial."
   }
 );
 
-server.tool("double_tap", "Double-tap at coordinates.",
+tool("double_tap", "Double-tap at coordinates.",
   { x: z.number(), y: z.number(), delay_ms: z.number().default(100) },
   async ({ x, y, delay_ms }) => {
     await shellExecQueued(`input tap ${x} ${y} && sleep ${(delay_ms/1000).toFixed(3)} && input tap ${x} ${y}`);
@@ -823,38 +872,38 @@ server.tool("double_tap", "Double-tap at coordinates.",
   }
 );
 
-server.tool("force_stop", "Force-stop an app by package name.",
+tool("force_stop", "Force-stop an app by package name.",
   { package: z.string() },
   async ({ package: pkg }) => {
-    const out = adb(`am force-stop ${pkg}`);
+    const out = adb(`am force-stop ${sq(pkg)}`);
     invalidateUi();
     return { content: [{ type:"text", text: out || `Force stopped ${pkg}` }] };
   }
 );
 
-server.tool("uninstall_apk", "Uninstall an app by package name.",
+tool("uninstall_apk", "Uninstall an app by package name.",
   { package: z.string(), keep_data: z.boolean().default(false) },
   async ({ package: pkg, keep_data }) => ({
-    content: [{ type:"text", text: adbExec(`uninstall${keep_data?" -k":""} ${pkg}`) }]
+    content: [{ type:"text", text: adbExec(keep_data ? ["uninstall","-k",pkg] : ["uninstall",pkg]) }]
   })
 );
 
-server.tool("clear_app_cache", "Clear an app's data and cache.",
+tool("clear_app_cache", "Clear an app's data and cache.",
   { package: z.string() },
   async ({ package: pkg }) => ({
-    content: [{ type:"text", text: adb(`pm clear ${pkg}`) }]
+    content: [{ type:"text", text: adb(`pm clear ${sq(pkg)}`) }]
   })
 );
 
-server.tool("reboot", "Reboot the device.",
+tool("reboot", "Reboot the device.",
   { mode: z.enum(["normal","recovery","bootloader"]).default("normal") },
   async ({ mode }) => {
-    adbExec(`reboot${mode !== "normal" ? " " + mode : ""}`);
+    adbExec(mode !== "normal" ? ["reboot", mode] : ["reboot"]);
     return { content: [{ type:"text", text:`Rebooting (${mode})…` }] };
   }
 );
 
-server.tool("get_location",
+tool("get_location",
   "Get current GPS coordinates from device location services.",
   {},
   async () => {
@@ -876,7 +925,7 @@ server.tool("get_location",
   }
 );
 
-server.tool("screen_record_start", "Start screen recording in background.",
+tool("screen_record_start", "Start screen recording in background.",
   { output: z.string().default("/sdcard/screenrecord.mp4"), time_limit: z.number().default(180) },
   async ({ output, time_limit }) => {
     const safe = output.replace(/[^a-zA-Z0-9/_.-]/g, "");
@@ -885,18 +934,18 @@ server.tool("screen_record_start", "Start screen recording in background.",
   }
 );
 
-server.tool("screen_record_stop", "Stop screen recording and pull the video.",
+tool("screen_record_stop", "Stop screen recording and pull the video.",
   { remote_path: z.string().default("/sdcard/screenrecord.mp4"), local_path: z.string().optional() },
   async ({ remote_path, local_path }) => {
     adbRoot("pkill screenrecord 2>/dev/null; true");
     await new Promise(r => setTimeout(r, 1200));
     const dest = local_path || "/data/data/com.termux/files/home/screenrecord.mp4";
-    adbExec(`pull "${remote_path}" "${dest}"`);
+    adbExec(["pull", remote_path, dest]);
     return { content: [{ type:"text", text:`Saved: ${dest}` }] };
   }
 );
 
-server.tool("wait_for_text", "Wait until specified text appears on screen.",
+tool("wait_for_text", "Wait until specified text appears on screen.",
   { text: z.string(), timeout_ms: z.number().default(15000), poll_ms: z.number().default(500) },
   async ({ text, timeout_ms, poll_ms }) => {
     const el = await pollUntil(xml => findElement(xml, { partialText: text }), timeout_ms, poll_ms);
@@ -905,7 +954,7 @@ server.tool("wait_for_text", "Wait until specified text appears on screen.",
   }
 );
 
-server.tool("rotate_screen", "Set screen rotation (0/90/180/270 degrees or auto).",
+tool("rotate_screen", "Set screen rotation (0/90/180/270 degrees or auto).",
   { rotation: z.enum(["0","90","180","270","auto"]) },
   async ({ rotation }) => {
     if (rotation === "auto") {
@@ -1889,66 +1938,61 @@ wrap.addEventListener('touchcancel',function(){ds=null;},{passive:false});
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 function checkAuth(req, res, url) {
-  if (!API_KEY) return true;
-  if ((req.headers["authorization"]||"") === `Bearer ${API_KEY}`) return true;
-  if (url && url.searchParams.get("token") === API_KEY) return true;
+  if (!currentApiKey()) return true;
+  if ((req.headers["authorization"]||"") === `Bearer ${currentApiKey()}`) return true;
+  if (url && url.searchParams.get("token") === currentApiKey()) return true;
   res.writeHead(401, {"Content-Type":"application/json","WWW-Authenticate":`Bearer realm="thereallywow"`});
   res.end(JSON.stringify({error:"Unauthorized"}));
   return false;
 }
 
+// Converts one zod type (as used across the tool shapes: number/string/boolean/enum/
+// object/array, optionally wrapped in .optional()/.default()/.describe()) into its JSON
+// Schema equivalent. This replaces a hand-typed, independently-maintained JSON schema
+// that had drifted from the zod shapes actually enforced elsewhere -- deriving it here
+// instead makes drift structurally impossible.
+function zodTypeToJsonSchema(zt) {
+  const def = zt._def;
+  let schema;
+  switch (def.typeName) {
+    case "ZodOptional":
+    case "ZodDefault":
+      schema = zodTypeToJsonSchema(def.innerType);
+      break;
+    case "ZodNumber":  schema = { type: "number" }; break;
+    case "ZodBoolean": schema = { type: "boolean" }; break;
+    case "ZodEnum":    schema = { type: "string", enum: def.values }; break;
+    case "ZodObject": {
+      const { properties, required } = shapeToJsonSchema(zt.shape);
+      schema = { type: "object", properties, ...(required.length ? { required } : {}) };
+      break;
+    }
+    case "ZodArray":
+      schema = { type: "array", items: zodTypeToJsonSchema(def.type) };
+      break;
+    case "ZodString":
+    default:
+      schema = { type: "string" };
+      break;
+  }
+  if (def.description && !schema.description) schema.description = def.description;
+  return schema;
+}
+
+function shapeToJsonSchema(shape) {
+  const properties = {}, required = [];
+  for (const [key, zt] of Object.entries(shape)) {
+    properties[key] = zodTypeToJsonSchema(zt);
+    if (!zt.isOptional()) required.push(key);
+  }
+  return { properties, required };
+}
+
 function buildOpenAIToolList() {
-  const T = (name, desc, props={}, req=[]) => ({ type:"function", function:{ name, description:desc, parameters:{type:"object",properties:props,required:req} } });
-  const num = {type:"number"}, str = {type:"string"}, bool = {type:"boolean"};
-  const point = {type:"object",properties:{x:num,y:num}};
-  const action = {type:"object",properties:{type:str,x:num,y:num,x2:num,y2:num,duration:num,key:str,text:str,ms:num}};
-  return [
-    T("get_ui_tree",        "Read UI as text tree",           {force_refresh:bool}),
-    T("find_element",       "Find element coords",            {text:str,partial_text:str,resource_id:str,description:str}),
-    T("wait_for_element",   "Poll until element appears",     {text:str,partial_text:str,resource_id:str,description:str,timeout_ms:num,poll_ms:num}),
-    T("tap_by_text",        "Tap element by text",            {text:str,partial:bool},["text"]),
-    T("tap_coords",         "Tap x,y",                       {x:num,y:num},["x","y"]),
-    T("long_press",         "Long press at x,y",             {x:num,y:num,duration_ms:num},["x","y"]),
-    T("swipe",              "Swipe a→b",                     {x1:num,y1:num,x2:num,y2:num,duration_ms:num},["x1","y1","x2","y2"]),
-    T("scroll",             "Scroll direction",              {direction:str,amount:num},["direction"]),
-    T("type_text",          "Type text",                     {text:str},["text"]),
-    T("keyevent",           "Android key event",             {key:str},["key"]),
-    T("batch_actions",      "Multiple actions, one trip",    {actions:{type:"array",items:action}},["actions"]),
-    T("repeat",             "Repeat actions N times",        {actions:{type:"array",items:action},count:num,interval_ms:num},["actions","count"]),
-    T("rapid_tap",          "Auto-clicker",                  {x:num,y:num,times:num,interval_ms:num},["x","y"]),
-    T("joystick",           "Analog stick simulation",       {center_x:num,center_y:num,angle_deg:num,distance_pct:num,radius:num,duration_ms:num},["center_x","center_y","angle_deg"]),
-    T("swipe_path",         "Multi-waypoint gesture",        {points:{type:"array",items:point},duration_ms:num},["points"]),
-    T("multi_touch",        "Simultaneous multi-finger",     {touches:{type:"array",items:point},duration_ms:num},["touches"]),
-    T("hold_and_do",        "Hold finger + tap elsewhere",   {hold:point,actions:{type:"array",items:action},release_after_ms:num},["hold","actions"]),
-    T("pinch",              "Pinch in or out",               {center_x:num,center_y:num,start_spread:num,end_spread:num,duration_ms:num},["center_x","center_y"]),
-    T("pixel_color",        "Read pixel color",              {x:num,y:num},["x","y"]),
-    T("screen_region",      "Crop screenshot",               {x:num,y:num,width:num,height:num},["x","y","width","height"]),
-    T("screenshot",         "Full screenshot PNG",           {}),
-    T("get_stream_url",     "Live MJPEG URL",                {fps:num}),
-    T("set_perf_mode",      "CPU performance mode",          {mode:str},["mode"]),
-    T("clipboard_set",      "Set device clipboard",          {text:str},["text"]),
-    T("push_file",          "Push file to device",           {local_path:str,device_path:str},["local_path","device_path"]),
-    T("pull_file",          "Pull file from device",         {device_path:str,local_path:str},["device_path"]),
-    T("install_apk",        "Install APK",                   {apk_path:str},["apk_path"]),
-    T("launch_app",         "Launch app by package",         {package:str},["package"]),
-    T("root_shell",         "Root shell command",            {command:str},["command"]),
-    T("list_packages",      "List packages",                 {filter:str}),
-    T("get_current_app",    "Foreground app",                {}),
-    T("start_network_capture","Start tcpdump",              {output:str,interface:str,filter:str}),
-    T("stop_network_capture", "Stop tcpdump + pull pcap",   {remote_path:str}),
-    T("get_notifications",  "Read notifications",            {}),
-    T("device_info",        "Device model/OS/battery",       {}),
-    T("double_tap",         "Double-tap at x,y",             {x:num,y:num,delay_ms:num},["x","y"]),
-    T("force_stop",         "Force stop app by package",     {package:str},["package"]),
-    T("uninstall_apk",      "Uninstall app by package",      {package:str,keep_data:bool},["package"]),
-    T("clear_app_cache",    "Clear app data/cache",          {package:str},["package"]),
-    T("get_location",       "Get GPS coordinates",           {}),
-    T("reboot",             "Reboot device",                 {mode:str}),
-    T("screen_record_start","Start screen recording",        {output:str,time_limit:num}),
-    T("screen_record_stop", "Stop + pull screen recording",  {remote_path:str,local_path:str}),
-    T("wait_for_text",      "Wait until text appears",       {text:str,timeout_ms:num,poll_ms:num},["text"]),
-    T("rotate_screen",      "Set screen rotation",           {rotation:str},["rotation"]),
-  ];
+  return Object.values(TOOLS).map(t => {
+    const { properties, required } = shapeToJsonSchema(t.shape);
+    return { type:"function", function:{ name:t.name, description:t.description, parameters:{type:"object",properties,required} } };
+  });
 }
 
 // Some tool-calling-specialist local models (e.g. Hammer2.1 via a hand-rolled Ollama
@@ -2005,7 +2049,7 @@ async function runChatCompletion(baseUrl, model, apiKey, messages, tools, action
     for (const call of toolCalls) {
       let result;
       try {
-        result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}")));
+        result = String(await executeTool(call.function.name, JSON.parse(call.function.arguments||"{}"), "chat"));
       } catch(e) { result = "Error: "+e.message; }
       actions.push({tool:call.function.name, args:call.function.arguments, result});
       messages.push({role:"tool", tool_call_id:call.id, content:result});
@@ -2014,141 +2058,24 @@ async function runChatCompletion(baseUrl, model, apiKey, messages, tools, action
   throw new Error("Too many tool rounds — may be looping");
 }
 
-async function executeTool(name, p) {
-  switch(name) {
-    case "get_ui_tree":       return uiTree(uiDump(p.force_refresh));
-    case "find_element": {
-      const el=findElement(uiDump(),{text:p.text,partialText:p.partial_text,resourceId:p.resource_id,description:p.description});
-      return el?JSON.stringify({x:el._x,y:el._y,text:el.text,resourceId:el["resource-id"],bounds:el.bounds}):"Not found";
-    }
-    case "wait_for_element": {
-      const el=await pollUntil(xml=>findElement(xml,{text:p.text,partialText:p.partial_text,resourceId:p.resource_id,description:p.description}),p.timeout_ms||10000,p.poll_ms||500);
-      return el?JSON.stringify({x:el._x,y:el._y,text:el.text,bounds:el.bounds}):`Not found within ${p.timeout_ms||10000}ms`;
-    }
-    case "tap_by_text": {
-      const el=findElement(uiDump(),p.partial?{partialText:p.text}:{text:p.text});
-      if(!el) return `Not found: "${p.text}"`;
-      await tap(el._x,el._y); return `Tapped "${el.text}" at (${el._x},${el._y})`;
-    }
-    case "tap_coords":        await tap(p.x,p.y); return `Tapped (${p.x},${p.y})`;
-    case "long_press":        await longPress(p.x,p.y,p.duration_ms||800); return `Long pressed`;
-    case "swipe":             await swipeCoords(p.x1,p.y1,p.x2,p.y2,p.duration_ms||300); return "Swiped";
-    case "scroll": {
-      const xml=uiDump(),m=xml.match(/bounds="\[0,0\]\[(\d+),(\d+)\]"/);
-      const W=m?parseInt(m[1]):1080,H=m?parseInt(m[2]):1920,cx=W>>1,cy=H>>1,amt=p.amount||0.5;
-      const c={up:[cx,cy+Math.round(H*amt),cx,cy-Math.round(H*amt)],down:[cx,cy-Math.round(H*amt),cx,cy+Math.round(H*amt)],left:[cx+Math.round(W*amt),cy,cx-Math.round(W*amt),cy],right:[cx-Math.round(W*amt),cy,cx+Math.round(W*amt),cy]}[p.direction];
-      await swipeCoords(...c,400); return `Scrolled ${p.direction}`;
-    }
-    case "type_text":         await typeText(p.text); return "Typed";
-    case "keyevent":          await keyeventCmd(p.key); return `Sent: ${p.key}`;
-    case "batch_actions": {
-      const cmds=[];
-      for(const a of p.actions||[]) {
-        if(a.type==="tap")      cmds.push(`input tap ${a.x} ${a.y}`);
-        if(a.type==="swipe")    cmds.push(`input swipe ${a.x} ${a.y} ${a.x2} ${a.y2} ${a.duration||300}`);
-        if(a.type==="keyevent") cmds.push(`input keyevent ${a.key}`);
-        if(a.type==="type")     cmds.push(`input text '${(a.text||"").replace(/ /g,"%s").replace(/'/g,"''")}'`);
-        if(a.type==="sleep")    cmds.push(`sleep ${((a.ms||500)/1000).toFixed(3)}`);
-      }
-      await shellExecQueued(cmds.join(" && ")); invalidateUi();
-      return `Executed ${(p.actions||[]).length} actions`;
-    }
-    case "repeat": {
-      const innerCmds=[];
-      for(const a of p.actions||[]) {
-        if(a.type==="tap")      innerCmds.push(`input tap ${a.x} ${a.y}`);
-        if(a.type==="swipe")    innerCmds.push(`input swipe ${a.x} ${a.y} ${a.x2} ${a.y2} ${a.duration||300}`);
-        if(a.type==="keyevent") innerCmds.push(`input keyevent ${a.key}`);
-        if(a.type==="type")     innerCmds.push(`input text '${(a.text||"").replace(/ /g,"%s").replace(/'/g,"''")}'`);
-        if(a.type==="sleep")    innerCmds.push(`sleep ${((a.ms||500)/1000).toFixed(3)}`);
-      }
-      const gap=p.interval_ms>0?`sleep ${(p.interval_ms/1000).toFixed(3)}`:"";
-      const iter=innerCmds.join(" && ");
-      const cmd=p.count<=20?Array(p.count).fill(iter).join(gap?` && ${gap} && `:" && ")
-        :`for i in $(seq 1 ${p.count}); do ${iter}${gap?`; ${gap}`:""};  done`;
-      await shellExecQueued(cmd,p.count*(innerCmds.length*200+(p.interval_ms||0))+10000);
-      invalidateUi(); return `Repeated ${p.count}x`;
-    }
-    case "rapid_tap": {
-      const s=(p.interval_ms/1000).toFixed(3),t=p.times||10,x=p.x,y=p.y;
-      const cmd=t<=30?Array(t).fill(`input tap ${x} ${y}`).join(` && sleep ${s} && `)
-        :`for i in $(seq 1 ${t}); do input tap ${x} ${y}; sleep ${s}; done`;
-      await shellExecQueued(cmd,t*(p.interval_ms+300)+5000); invalidateUi();
-      return `Tapped ${t}x at (${x},${y})`;
-    }
-    case "joystick": {
-      const rad=(p.angle_deg*Math.PI)/180,dist=(p.radius||120)*(p.distance_pct||0.8);
-      const tx=Math.round(p.center_x+Math.cos(rad)*dist),ty=Math.round(p.center_y-Math.sin(rad)*dist);
-      await swipeCoords(p.center_x,p.center_y,tx,ty,p.duration_ms||500);
-      return `Joystick ${p.angle_deg}° → (${tx},${ty})`;
-    }
-    case "swipe_path": {
-      const pts=p.points,segMs=Math.floor((p.duration_ms||600)/(pts.length-1));
-      const cmds=[se(EV_ABS,ABS_MT_SLOT,0),se(EV_ABS,ABS_MT_TRACKING_ID,1),se(EV_ABS,ABS_MT_POS_X,pts[0].x),se(EV_ABS,ABS_MT_POS_Y,pts[0].y),se(EV_SYN,SYN_REPORT,0)];
-      for(let i=1;i<pts.length;i++){const steps=Math.max(1,Math.floor(segMs/16));const ip=interpolate(pts[i-1].x,pts[i-1].y,pts[i].x,pts[i].y,steps);for(const pp of ip.slice(1)){cmds.push("sleep 0.016",se(EV_ABS,ABS_MT_SLOT,0),se(EV_ABS,ABS_MT_POS_X,pp.x),se(EV_ABS,ABS_MT_POS_Y,pp.y),se(EV_SYN,SYN_REPORT,0));}}
-      cmds.push(se(EV_ABS,ABS_MT_SLOT,0),se(EV_ABS,ABS_MT_TRACKING_ID,LIFT),se(EV_SYN,SYN_REPORT,0));
-      await shellExecQueued(`su -c '${cmds.join(" && ")}'`,(p.duration_ms||600)+5000); invalidateUi();
-      return `Swipe path: ${pts.length} waypoints`;
-    }
-    case "multi_touch": {
-      await shellExecQueued(`su -c '${buildMultiTouchCmds(p.touches,p.duration_ms||200)}'`,(p.duration_ms||200)+3000);
-      invalidateUi(); return `${p.touches.length}-finger touch`;
-    }
-    case "hold_and_do": {
-      const cmds=[`su -c '${se(EV_ABS,ABS_MT_SLOT,0)} && ${se(EV_ABS,ABS_MT_TRACKING_ID,1)} && ${se(EV_ABS,ABS_MT_POS_X,p.hold.x)} && ${se(EV_ABS,ABS_MT_POS_Y,p.hold.y)} && ${se(EV_SYN,SYN_REPORT,0)}'`];
-      for(const a of p.actions||[]){if(a.type==="tap")cmds.push(`input tap ${a.x} ${a.y}`);if(a.type==="sleep")cmds.push(`sleep ${((a.ms||100)/1000).toFixed(3)}`);}
-      if(p.release_after_ms>0)cmds.push(`sleep ${(p.release_after_ms/1000).toFixed(3)}`);
-      cmds.push(`su -c '${se(EV_ABS,ABS_MT_SLOT,0)} && ${se(EV_ABS,ABS_MT_TRACKING_ID,LIFT)} && ${se(EV_SYN,SYN_REPORT,0)}'`);
-      await shellExecQueued(cmds.join(" && "),15000); invalidateUi();
-      return `Held (${p.hold.x},${p.hold.y}) + ${(p.actions||[]).length} actions`;
-    }
-    case "pinch": {
-      const steps=Math.max(4,Math.floor((p.duration_ms||400)/16));
-      const ss=p.start_spread||300,es=p.end_spread||50,cx=p.center_x,cy=p.center_y;
-      const tracks=[{points:interpolate(cx-ss/2,cy,cx-es/2,cy,steps)},{points:interpolate(cx+ss/2,cy,cx+es/2,cy,steps)}];
-      await shellExecQueued(`su -c '${buildMultiTouchDragCmds(tracks,Math.floor((p.duration_ms||400)/steps))}'`,(p.duration_ms||400)+3000);
-      invalidateUi(); return `Pinched ${es<ss?"in":"out"} ${ss}→${es}px`;
-    }
-    case "pixel_color":       return JSON.stringify(readPixelColor(p.x,p.y));
-    case "screen_region":     return captureRegion(p.x,p.y,p.width,p.height).toString("base64");
-    case "screenshot":        return takeScreenshot().toString("base64");
-    case "get_stream_url":    { const port=parseInt(process.env.PORT||"3456"),fps=p.fps||2; return `Viewer: http://localhost:${port}/view?fps=${fps}\nStream: http://localhost:${port}/stream?fps=${fps}`; }
-    case "set_perf_mode":     { const gov=p.mode==="performance"?"performance":p.mode==="powersave"?"powersave":"schedutil"; return adbRoot(`for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo ${gov} > $f 2>/dev/null; done; cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor`); }
-    case "clipboard_set":     adbRoot(`am broadcast -a clipper.SET -e text '${p.text.replace(/'/g,`'\\''`)}' 2>/dev/null; true`); return "Set";
-    case "push_file":         return adbExec(`push "${p.local_path}" "${p.device_path}"`);
-    case "pull_file":         { const d=p.local_path||"/data/data/com.termux/files/home/pulled_file"; return adbExec(`pull "${p.device_path}" "${d}"`)+`\nSaved: ${d}`; }
-    case "install_apk":       return adbExec(`install -r "${p.apk_path}"`);
-    case "launch_app":        invalidateUi(); return adb(`monkey -p ${p.package} -c android.intent.category.LAUNCHER 1`);
-    case "root_shell":        return adbRoot(p.command)||"(no output)";
-    case "list_packages":     return adb(`pm list packages${p.filter?" -e "+p.filter:""}`);
-    case "get_current_app":   { const out=execSync(`adb -s ${DEVICE} shell dumpsys activity activities`,{encoding:"utf8",timeout:10000}); const m=out.match(/topResumedActivity=.*?([a-z][a-z0-9_.]+\/[.\w]+)/i); return m?m[1]:"unknown"; }
-    case "start_network_capture": { const o=(p.output||"/sdcard/capture.pcap").replace(/[^a-zA-Z0-9/_.-]/g,""),i=(p.interface||"any").replace(/[^a-zA-Z0-9_.-]/g,""),f=(p.filter||"").replace(/[^a-zA-Z0-9 ._!&|()]/g,""); adbRoot(`tcpdump -i ${i} -w ${o}${f?` '${f}'`:""} &`); return `Started → ${o}`; }
-    case "stop_network_capture":  { adbRoot("pkill tcpdump"); const local="/data/data/com.termux/files/home/capture.pcap"; execSync(`adb -s ${DEVICE} pull "${p.remote_path||"/sdcard/capture.pcap"}" "${local}"`,{timeout:30000}); return `Saved to ${local}`; }
-    case "get_notifications": return adbRoot("dumpsys notification --noredact 2>/dev/null | grep -A3 NotificationRecord | head -60")||"(none)";
-    case "device_info":       { const props=["ro.product.model","ro.product.manufacturer","ro.build.version.release","ro.build.version.sdk","ro.serialno"]; return JSON.stringify(Object.fromEntries(props.map(p=>[p,adb(`getprop ${p}`)])),null,2); }
-    case "double_tap":        { await shellExecQueued(`input tap ${p.x} ${p.y} && sleep ${((p.delay_ms||100)/1000).toFixed(3)} && input tap ${p.x} ${p.y}`); invalidateUi(); return `Double tapped (${p.x},${p.y})`; }
-    case "force_stop":        { const o=adb(`am force-stop ${p.package}`); invalidateUi(); return o||`Force stopped ${p.package}`; }
-    case "uninstall_apk":     return adbExec(`uninstall${p.keep_data?" -k":""} ${p.package}`);
-    case "clear_app_cache":   return adb(`pm clear ${p.package}`);
-    case "get_location": {
-      const out = adb("dumpsys location 2>/dev/null | grep -F 'Location['");
-      for (const provider of ["fused","gps","network","passive"]) {
-        const re = new RegExp(`Location\\[${provider}\\s+([\\-\\d.]+),([\\-\\d.]+)(?:\\s+hAcc=([\\d.]+))?`);
-        const m = out.match(re);
-        if (m) {
-          const accStr = m[3] ? ` \u00b1${Math.round(parseFloat(m[3]))}m` : "";
-          return `${parseFloat(m[1]).toFixed(6)}, ${parseFloat(m[2]).toFixed(6)}${accStr} (${provider})`;
-        }
-      }
-      const m2 = out.match(/Location\[\w+ ([\-\d.]+),([\-\d.]+)/);
-      return m2 ? `${parseFloat(m2[1]).toFixed(6)}, ${parseFloat(m2[2]).toFixed(6)}` : "unavailable — ensure location is enabled";
-    }
-    case "reboot":            adbExec(`reboot${p.mode&&p.mode!=="normal"?" "+p.mode:""}`); return `Rebooting (${p.mode||"normal"})…`;
-    case "screen_record_start": { const safe=(p.output||"/sdcard/screenrecord.mp4").replace(/[^a-zA-Z0-9/_.-]/g,""); adbRoot(`screenrecord --time-limit ${p.time_limit||180} ${safe} &`); return `Recording → ${safe}`; }
-    case "screen_record_stop":  { adbRoot("pkill screenrecord 2>/dev/null; true"); await new Promise(r=>setTimeout(r,1200)); const dest=p.local_path||"/data/data/com.termux/files/home/screenrecord.mp4"; adbExec(`pull "${p.remote_path||"/sdcard/screenrecord.mp4"}" "${dest}"`); return `Saved: ${dest}`; }
-    case "wait_for_text":     { const el=await pollUntil(xml=>findElement(xml,{partialText:p.text}),p.timeout_ms||15000,p.poll_ms||500); return el?`Found "${p.text}" at (${el._x},${el._y})`:`"${p.text}" not found within ${p.timeout_ms||15000}ms`; }
-    case "rotate_screen":     { if(p.rotation==="auto"){adb("settings put system accelerometer_rotation 1");}else{const v={"0":0,"90":1,"180":2,"270":3}[p.rotation]??0;adb("settings put system accelerometer_rotation 0");adb(`settings put system user_rotation ${v}`);}return `Rotation: ${p.rotation}`; }
-    default: throw new Error(`Unknown tool: ${name}`);
+async function executeTool(name, p, source = "http") {
+  const t = TOOLS[name];
+  if (!t) { auditLog(name, source, false); throw new Error(`Unknown tool: ${name}`); }
+  const parsed = t.schema.safeParse(p || {});
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map(i => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; ");
+    auditLog(name, source, false);
+    throw new Error(`Invalid parameters for ${name}: ${msg}`);
+  }
+  try {
+    const result = await t.handler(parsed.data);
+    auditLog(name, source, true);
+    const item = result?.content?.[0];
+    if (!item) return "";
+    return item.type === "image" ? item.data : (item.text ?? String(item.data ?? ""));
+  } catch (e) {
+    auditLog(name, source, false);
+    throw e;
   }
 }
 
@@ -2171,12 +2098,12 @@ function startHttpServer(port = 3456) {
     if (url.pathname === "/" || url.pathname === "/view") {
       const fps = Math.min(10, Math.max(1, parseInt(url.searchParams.get("fps")||"2")));
       res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"});
-      return res.end(VIEWER_HTML(port, fps, API_KEY));
+      return res.end(VIEWER_HTML(port, fps, currentApiKey()));
     }
 
     if (url.pathname === "/chat") {
       res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"});
-      return res.end(CHAT_HTML(API_KEY));
+      return res.end(CHAT_HTML(currentApiKey()));
     }
 
     // ── Auth-gated routes (token= accepted for browser <img> sources) ──────────
@@ -2232,7 +2159,7 @@ function startHttpServer(port = 3456) {
         tunnel_url:tunnel,
         stream:`/stream?fps=2`, viewer:`/`,
         tools:buildOpenAIToolList().length, version:"1.0.0",
-        keys:{ server_key_set:!!API_KEY, agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
+        keys:{ server_key_set:!!currentApiKey(), agnes_key_set:!!readEnvKey("AGNES_API_KEY"),
                agnes_base_url:readEnvKey("AGNES_BASE_URL")||"", agnes_model:readEnvKey("AGNES_MODEL")||"",
                ollama_base_url:readEnvKey("OLLAMA_BASE_URL")||"http://127.0.0.1:11434/v1",
                ollama_model:readEnvKey("OLLAMA_MODEL")||"qwen2.5:3b" },
@@ -2274,7 +2201,7 @@ function startHttpServer(port = 3456) {
         }
         writeFileSync(envPath, updated.join("\n") + "\n", {mode: 0o600});
         res.writeHead(200, {"Content-Type":"application/json"});
-        return res.end(JSON.stringify({ok:true, key, set:!!value, restart_required: key==="MCP_API_KEY"}));
+        return res.end(JSON.stringify({ok:true, key, set:!!value, restart_required: false}));
       } catch(e) {
         res.writeHead(500, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({error:e.message}));
@@ -2284,6 +2211,10 @@ function startHttpServer(port = 3456) {
     if (url.pathname === "/reconnect" && req.method === "POST") {
       let newDev = null;
       try { newDev = JSON.parse(body).device || null; } catch {}
+      if (newDev && !isValidDeviceId(newDev)) {
+        res.writeHead(400, {"Content-Type":"application/json"});
+        return res.end(JSON.stringify({error:"Invalid device id"}));
+      }
       const ok = adbReconnect(newDev || undefined);
       // Persist new device to .env if changed
       if (newDev && newDev !== DEVICE) {
@@ -2307,7 +2238,7 @@ function startHttpServer(port = 3456) {
     if (url.pathname === "/execute" && req.method === "POST") {
       try {
         const {tool_name, parameters} = JSON.parse(body);
-        const result = await executeTool(tool_name, parameters||{});
+        const result = await executeTool(tool_name, parameters||{}, "http");
         res.writeHead(200, {"Content-Type":"application/json"});
         return res.end(JSON.stringify({result}));
       } catch(e) {
@@ -2329,7 +2260,7 @@ function startHttpServer(port = 3456) {
             args: [join(__dir, "server.mjs")],
             env: {
               MCP_MODE: "stdio",
-              ...(API_KEY ? {MCP_API_KEY: API_KEY} : {})
+              ...(currentApiKey() ? {MCP_API_KEY: currentApiKey()} : {})
             }
           }
         },
@@ -2339,7 +2270,7 @@ function startHttpServer(port = 3456) {
           tools: `GET /tools`,
           execute: `POST /execute`,
           chat: `GET /chat`,
-          ...(API_KEY ? {api_key: API_KEY} : {})
+          ...(currentApiKey() ? {api_key: currentApiKey()} : {})
         },
         system_prompt: "You control a rooted Android device via thereallywow tools. Use screenshot to see the screen, tap_coords/swipe for touch input, type_text to type, root_shell for root commands. Be concise and action-oriented."
       }, null, 2));
@@ -2402,16 +2333,31 @@ function startHttpServer(port = 3456) {
   srv.listen(port, "0.0.0.0", () =>
     process.stderr.write(`[thereallywow] HTTP :${port} → http://localhost:${port}/\n`)
   );
+  return srv;
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
+// Guarded so importing this file (e.g. from a test) only defines TOOLS/executeTool/
+// startHttpServer etc. without also connecting to a real device, binding a real port,
+// or opening a stdio transport — none of that should happen except when this file is
+// actually run directly, exactly as it always ran before this guard existed.
 
-const mode = process.env.MCP_MODE || "stdio";
-if (mode === "http") {
-  startHttpServer(parseInt(process.env.PORT || "3456"));
-  process.stderr.write("[thereallywow] HTTP mode — OpenAI/Agnes compatible\n");
-} else {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  process.stderr.write("[thereallywow] stdio mode — Claude Desktop / OpenClaw\n");
+const isMainModule = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isMainModule) {
+  // Reconnect once at startup, then check every 30s
+  adbReconnect();
+  setInterval(() => { if (!adbIsAlive()) adbReconnect(); }, 30000);
+
+  const mode = process.env.MCP_MODE || "stdio";
+  if (mode === "http") {
+    startHttpServer(parseInt(process.env.PORT || "3456"));
+    process.stderr.write("[thereallywow] HTTP mode — OpenAI/Agnes compatible\n");
+  } else {
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    process.stderr.write("[thereallywow] stdio mode — Claude Desktop / OpenClaw\n");
+  }
 }
+
+export { TOOLS, executeTool, buildOpenAIToolList, startHttpServer, sq, isValidDeviceId };

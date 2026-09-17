@@ -26,6 +26,8 @@ CURRENT="${1:-$ADB_DEVICE}"
 FIXED_PORT="${2:-5555}"
 
 [ -z "$CURRENT" ] && err "No device address. Run: bash fix-adb-port.sh <IP:PORT>"
+[[ "$FIXED_PORT" =~ ^[0-9]{1,5}$ ]] && [ "$FIXED_PORT" -ge 1 ] && [ "$FIXED_PORT" -le 65535 ] || \
+  err "Invalid port: $FIXED_PORT (must be 1-65535)"
 
 DEVICE_IP="${CURRENT%%:*}"
 [ -z "$DEVICE_IP" ] && err "Could not parse IP from: $CURRENT"
